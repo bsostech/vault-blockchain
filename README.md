@@ -6,7 +6,7 @@ vault-bridgex is a vault plugin to generate and store Ethereum private keys. We 
 
 ![1. Register](/images/workflow_01.jpg)
 ![2. Login](/images/workflow_02.jpg)
-![3. Sign Transaction](/images/workflow_03.jpg)
+![3. Sign Transaction](/images/workflow_03.png)
 
 ## HCL Policies
 
