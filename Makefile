@@ -8,7 +8,7 @@ VAULT_ADDR ?= http://localhost:8200
 build-local:
 	CGO_ENABLED=1 go build \
 	-ldflags="-s -w" \
-	-o plugins/vault-bridgex cmd/bridgex/main.go
+	-o plugins/vault-blockchain cmd/blockchain/main.go
 
 install-lint-tools:
 	GO111MODULE=off go get -u -d golang.org/x/lint/golint

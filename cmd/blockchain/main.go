@@ -24,7 +24,7 @@ import (
 	"github.com/hashicorp/vault/api"
 	"github.com/hashicorp/vault/sdk/plugin"
 
-	"github.com/bsostech/vault-bridgex/internal/backend"
+	"github.com/bsostech/vault-blockchain/internal/backend"
 )
 
 func main() {

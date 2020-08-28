@@ -24,7 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
 
-	"github.com/bsostech/vault-bridgex/pkg/utils"
+	"github.com/bsostech/vault-blockchain/pkg/utils"
 )
 
 // Account is an Ethereum account

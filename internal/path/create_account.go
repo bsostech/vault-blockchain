@@ -28,8 +28,8 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 	"golang.org/x/crypto/sha3"
 
-	"github.com/bsostech/vault-bridgex/internal/model"
-	"github.com/bsostech/vault-bridgex/pkg/utils"
+	"github.com/bsostech/vault-blockchain/internal/model"
+	"github.com/bsostech/vault-blockchain/pkg/utils"
 )
 
 type createAccountPathConfig struct {
