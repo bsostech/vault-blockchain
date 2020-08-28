@@ -2,16 +2,16 @@
 
 function install_plugin {
   make build-local
-  export SHASUM256=$(shasum -a 256 "./plugins/vault-bridgex" | cut -d' ' -f1)
-  vault write sys/plugins/catalog/bridgex-plugin \
+  export SHASUM256=$(shasum -a 256 "./plugins/vault-blockchain" | cut -d' ' -f1)
+  vault write sys/plugins/catalog/blockchain-plugin \
         sha_256="${SHASUM256}" \
-        command="vault-bridgex --tls-skip-verify=true"
-  vault secrets enable -path=bx -description="BSOS Wallet" -plugin-name=bridgex-plugin plugin
+        command="vault-blockchain --tls-skip-verify=true"
+  vault secrets enable -path=blockchain -description="BSOS Wallet" -plugin-name=blockchain-plugin plugin
 }
 
 function create_policy {
-  vault policy write bx_user ./configs/bx_user.hcl
-  vault policy write bx_master ./configs/bx_master.hcl
+  vault policy write blockchain_user ./configs/blockchain_user.hcl
+  vault policy write blockchain_master ./configs/blockchain_master.hcl
 }
 
 function enable_userpass {

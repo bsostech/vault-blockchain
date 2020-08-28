@@ -21,7 +21,7 @@ import (
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 
-	"github.com/bsostech/vault-bridgex/internal/path"
+	"github.com/bsostech/vault-blockchain/internal/path"
 )
 
 // backend for this plugin

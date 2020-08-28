@@ -10,7 +10,7 @@ path "identity/entity" {
     capabilities = [ "read", "update" ]
 }
 
-path "bx/accounts/+/address" {
+path "blockchain/accounts/+/address" {
     capabilities = [ "create" ]
 }
 

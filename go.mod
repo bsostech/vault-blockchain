@@ -1,4 +1,4 @@
-module github.com/bsostech/vault-bridgex
+module github.com/bsostech/vault-blockchain
 
 go 1.13
 

@@ -1,11 +1,11 @@
-# vault-bridgex (vault-bx)
+# vault-blockchain
 
-vault-bridgex is a vault plugin to generate and store Ethereum private keys. We can use it to sign transaction in Vault without revealing private keys.
+vault-blockchain is a vault plugin to generate and store Ethereum private keys. We can use it to sign transaction in Vault without revealing private keys.
 
 ## Workflow
 
-![1. Register](/images/workflow_01.jpg)
-![2. Login](/images/workflow_02.jpg)
+![1. Register](/images/workflow_01.png)
+![2. Login](/images/workflow_02.png)
 ![3. Sign Transaction](/images/workflow_03.png)
 
 ## HCL Policies
@@ -26,7 +26,7 @@ path "identity/entity" {
     capabilities = [ "read", "update" ]
 }
 
-path "bx/accounts/+/address" {
+path "blockchain/accounts/+/address" {
     capabilities = [ "create" ]
 }
 ```
@@ -35,7 +35,7 @@ Each of user token is corresponding to identity, so it can only operate private 
 
 ```hcl
 # bx_user.hcl
-path "bx/accounts/{{identity.entity.name}}/*" {
+path "blockchain/accounts/{{identity.entity.name}}/*" {
     capabilities = [ "create" ]
 }
 ```
@@ -46,7 +46,7 @@ path "bx/accounts/{{identity.entity.name}}/*" {
 
 | Method | Path                        |
 | ------ | --------------------------- |
-| `POST` | `bx/accounts/:name/address` |
+| `POST` | `blockchain/accounts/:name/address` |
 
 #### Parameters
 
@@ -56,7 +56,7 @@ path "bx/accounts/{{identity.entity.name}}/*" {
 
 | Method | Path                        |
 | ------ | --------------------------- |
-| `POST` | `bx/accounts/:name/sign-tx` |
+| `POST` | `blockchain/accounts/:name/sign-tx` |
 
 #### Parameters
 
@@ -74,7 +74,7 @@ path "bx/accounts/{{identity.entity.name}}/*" {
 
 | Method | Path                                     |
 | ------ | ---------------------------------------- |
-| `POST` | `bx/accounts/:name/sign-besu-private-tx` |
+| `POST` | `blockchain/accounts/:name/sign-besu-private-tx` |
 
 #### Parameters
 
@@ -94,7 +94,7 @@ path "bx/accounts/{{identity.entity.name}}/*" {
 
 | Method | Path                     |
 | ------ | ------------------------ |
-| `POST` | `bx/accounts/:name/sign` |
+| `POST` | `blockchain/accounts/:name/sign` |
 
 #### Parameters
 
@@ -105,7 +105,7 @@ path "bx/accounts/{{identity.entity.name}}/*" {
 
 | Method | Path                        |
 | ------ | --------------------------- |
-| `POST` | `bx/accounts/:name/encrypt` |
+| `POST` | `blockchain/accounts/:name/encrypt` |
 
 #### Parameters
 
@@ -116,7 +116,7 @@ path "bx/accounts/{{identity.entity.name}}/*" {
 
 | Method | Path                        |
 | ------ | --------------------------- |
-| `POST` | `bx/accounts/:name/decrypt` |
+| `POST` | `blockchain/accounts/:name/decrypt` |
 
 #### Parameters
 
