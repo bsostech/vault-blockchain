@@ -70,6 +70,39 @@ func TestAccount_GetPublicKeyECIES_smoke(t *testing.T) {
 	}
 }
 
+func TestAccount_GetPrivateKeyECIES_matchesECDSAKey(t *testing.T) {
+	t.Parallel()
+
+	pk, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	privHexNo0x := hexutil.Encode(crypto.FromECDSA(pk))[2:]
+	a := NewAccount(crypto.PubkeyToAddress(pk.PublicKey).Hex(), privHexNo0x, "")
+
+	eciesKey, err := a.GetPrivateKeyECIES()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eciesKey == nil {
+		t.Fatal("expected non-nil ECIES private key")
+	}
+
+	ecdsaKey := eciesKey.ExportECDSA()
+	if ecdsaKey == nil {
+		t.Fatal("expected non-nil exported ECDSA key")
+	}
+	if ecdsaKey.D == nil || pk.D == nil {
+		t.Fatal("expected non-nil private scalar D")
+	}
+	if ecdsaKey.D.Cmp(pk.D) != 0 {
+		t.Fatal("private key scalar mismatch")
+	}
+	if !publicKeysEqual(&ecdsaKey.PublicKey, &pk.PublicKey) {
+		t.Fatal("public key mismatch")
+	}
+}
+
 func publicKeysEqual(a, b *ecdsa.PublicKey) bool {
 	if a == nil || b == nil {
 		return a == b

@@ -106,3 +106,32 @@ func TestMustGetBigIntAny(t *testing.T) {
 		t.Fatal("expected error for missing value")
 	}
 }
+
+func TestMustGetBigInt_rejectsInvalidDecimal(t *testing.T) {
+	t.Parallel()
+
+	w := fieldDataForTest(t, map[string]interface{}{"n": "abc"}, "n")
+	if bi, err := w.MustGetBigInt("n"); err == nil || bi != nil {
+		t.Fatalf("expected error and nil big.Int, got bi=%v err=%v", bi, err)
+	}
+}
+
+func TestMustGetUint64_rejectsInvalidDecimal(t *testing.T) {
+	t.Parallel()
+
+	w := fieldDataForTest(t, map[string]interface{}{"n": "abc"}, "n")
+	if _, err := w.MustGetUint64("n"); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestGetBigInt_invalidReturnsDefault(t *testing.T) {
+	t.Parallel()
+
+	def := big.NewInt(7)
+	w := fieldDataForTest(t, map[string]interface{}{"n": "abc"}, "n")
+	got := w.GetBigInt("n", def)
+	if got == nil || got.Cmp(def) != 0 {
+		t.Fatalf("got %v want %v", got, def)
+	}
+}
