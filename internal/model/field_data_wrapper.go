@@ -26,20 +26,60 @@ import (
 	"github.com/bsostech/vault-blockchain/pkg/utils"
 )
 
-// FieldDataWrapper used to processing data from framework.FieldData
+// FieldDataWrapper adds typed getters on top of framework.FieldData.
 type FieldDataWrapper struct {
 	*framework.FieldData
 }
 
-// NewFieldDataWrapper returns FieldDataWrapper
+// NewFieldDataWrapper wraps framework.FieldData for typed access.
 func NewFieldDataWrapper(data *framework.FieldData) *FieldDataWrapper {
 	return &FieldDataWrapper{
 		FieldData: data,
 	}
 }
 
-// GetString get string value from framework.FieldData with specific key,
-// returns defaultValue when the key doesn't exist or the value of the key is not type of string.
+// GetStringFirstNonEmpty returns the first non-empty string among keys (API alias / evolution).
+func (f *FieldDataWrapper) GetStringFirstNonEmpty(keys ...string) string {
+	for _, k := range keys {
+		if s := f.GetString(k, ""); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// BigIntWithAliases parses decimal integers from a then b; falls back to defaultVal when both empty.
+func (f *FieldDataWrapper) BigIntWithAliases(a, b string, defaultVal *big.Int) *big.Int {
+	if s := f.GetString(a, ""); s != "" {
+		if bi := utils.ValidNumber(s); bi != nil {
+			return bi
+		}
+	}
+	if s := f.GetString(b, ""); s != "" {
+		if bi := utils.ValidNumber(s); bi != nil {
+			return bi
+		}
+	}
+	return defaultVal
+}
+
+// MustGetBigIntAny requires a non-empty decimal string at one of the given keys.
+func (f *FieldDataWrapper) MustGetBigIntAny(keys ...string) (*big.Int, error) {
+	for _, k := range keys {
+		s := f.GetString(k, "")
+		if s == "" {
+			continue
+		}
+		bi := utils.ValidNumber(s)
+		if bi == nil {
+			return nil, fmt.Errorf("invalid decimal integer for key %q", k)
+		}
+		return bi, nil
+	}
+	return nil, fmt.Errorf("missing non-empty decimal field: need one of %v", keys)
+}
+
+// GetString reads a string field, or defaultValue when unset or not a string.
 func (f *FieldDataWrapper) GetString(key string, defaultValue string) string {
 	valueInterface := f.Get(key)
 	if valueInterface == nil {
@@ -52,8 +92,7 @@ func (f *FieldDataWrapper) GetString(key string, defaultValue string) string {
 	return value
 }
 
-// MustGetString get string value from framework.FieldData with specific key,
-// returns error when the key doesn't exist or the value of the key is not type of string.
+// MustGetString returns the string at key or an error when missing or not a string.
 func (f *FieldDataWrapper) MustGetString(key string) (string, error) {
 	valueInterface := f.Get(key)
 	if valueInterface == nil {
@@ -66,8 +105,7 @@ func (f *FieldDataWrapper) MustGetString(key string) (string, error) {
 	return value, nil
 }
 
-// GetStringSlice get string slice value from framework.FieldData with specific key,
-// returns defaultValue when the key doesn't exist or the value of the key is not type of string slice.
+// GetStringSlice reads a []string field, or defaultValue when unset or wrong type.
 func (f *FieldDataWrapper) GetStringSlice(key string, defaultValue []string) []string {
 	valueInterface := f.Get(key)
 	if valueInterface == nil {
@@ -88,8 +126,7 @@ func (f *FieldDataWrapper) GetStringSlice(key string, defaultValue []string) []s
 	return value
 }
 
-// MustGetStringSlice get string slice value from framework.FieldData with specific key,
-// returns error when the key doesn't exist or the value of the key is not type of string slice.
+// MustGetStringSlice returns a string slice at key or an error when missing or not a string slice.
 func (f *FieldDataWrapper) MustGetStringSlice(key string) ([]string, error) {
 	valueInterface := f.Get(key)
 	if valueInterface == nil {
@@ -110,8 +147,7 @@ func (f *FieldDataWrapper) MustGetStringSlice(key string) ([]string, error) {
 	return value, nil
 }
 
-// GetBool get bool value from framework.FieldData with specific key,
-// returns defaultValue when the key doesn't exist or the value of the key is not type of bool.
+// GetBool reads a bool field, or defaultValue when unset or not a bool.
 func (f *FieldDataWrapper) GetBool(key string, defaultValue bool) bool {
 	valueInterface := f.Get(key)
 	if valueInterface == nil {
@@ -124,8 +160,7 @@ func (f *FieldDataWrapper) GetBool(key string, defaultValue bool) bool {
 	return value
 }
 
-// MustGetBool get bool value from framework.FieldData with specific key,
-// returns error when the key doesn't exist or the value of the key is not type of bool.
+// MustGetBool returns the bool at key or an error when missing or not a bool.
 func (f *FieldDataWrapper) MustGetBool(key string) (bool, error) {
 	valueInterface := f.Get(key)
 	if valueInterface == nil {
@@ -138,8 +173,7 @@ func (f *FieldDataWrapper) MustGetBool(key string) (bool, error) {
 	return value, nil
 }
 
-// GetBigInt get big.Int value from framework.FieldData with specific key,
-// returns defaultValue when the key doesn't exist or the value of the key is not type of big.Int.
+// GetBigInt parses a decimal string field into *big.Int, or returns defaultValue.
 func (f *FieldDataWrapper) GetBigInt(key string, defaultValue *big.Int) *big.Int {
 	valueInterface := f.Get(key)
 	if valueInterface == nil {
@@ -152,8 +186,7 @@ func (f *FieldDataWrapper) GetBigInt(key string, defaultValue *big.Int) *big.Int
 	return utils.ValidNumber(value)
 }
 
-// MustGetBigInt get big.Int value from framework.FieldData with specific key,
-// returns error when the key doesn't exist or the value of the key is not type of big.Int.
+// MustGetBigInt parses a required decimal string field into *big.Int.
 func (f *FieldDataWrapper) MustGetBigInt(key string) (*big.Int, error) {
 	valueInterface := f.Get(key)
 	if valueInterface == nil {
@@ -166,8 +199,7 @@ func (f *FieldDataWrapper) MustGetBigInt(key string) (*big.Int, error) {
 	return utils.ValidNumber(value), nil
 }
 
-// GetUint64 get unit64 value from framework.FieldData with specific key,
-// returns defaultValue when the key doesn't exist or the value of the key is not type of unit64.
+// GetUint64 parses a decimal string field into uint64, or returns defaultValue on error.
 func (f *FieldDataWrapper) GetUint64(key string, defaultValue uint64) uint64 {
 	bigInt, err := f.MustGetBigInt(key)
 	if err != nil {
@@ -176,8 +208,7 @@ func (f *FieldDataWrapper) GetUint64(key string, defaultValue uint64) uint64 {
 	return bigInt.Uint64()
 }
 
-// MustGetUint64 get unit64 value from framework.FieldData with specific key,
-// returns error when the key doesn't exist or the value of the key is not type of unit64.
+// MustGetUint64 parses a required decimal string field into uint64.
 func (f *FieldDataWrapper) MustGetUint64(key string) (uint64, error) {
 	bigInt, err := f.MustGetBigInt(key)
 	if err != nil {
@@ -186,10 +217,12 @@ func (f *FieldDataWrapper) MustGetUint64(key string) (uint64, error) {
 	return bigInt.Uint64(), nil
 }
 
+// errorResolve returns a missing-field error for MustGet* helpers.
 func (f *FieldDataWrapper) errorResolve(key string) error {
 	return fmt.Errorf("failed to resolve value with key %v", key)
 }
 
+// errorTypeMismatch returns a wrong-type error for MustGet* helpers.
 func (f *FieldDataWrapper) errorTypeMismatch(key string) error {
 	return fmt.Errorf("failed to resolve value with key %v, type mismatch", key)
 }
