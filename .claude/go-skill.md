@@ -1,0 +1,192 @@
+---
+name: golang-style
+description:
+  Use this skill BEFORE writing or editing any Go (.go) files. Triggers when
+  about to create, modify, or add code to .go files. Enforces happy path coding,
+  error wrapping, sentinel errors, godoc-style comments, and `go doc` usage.
+---
+
+# Go Coding Conventions
+
+## Proverbs
+
+Try to follow the proverbs:
+
+> Go Proverbs
+> Simple, Poetic, Pithy
+> Don't communicate by sharing memory, share memory by communicating.
+> Concurrency is not parallelism.
+> Channels orchestrate; mutexes serialize.
+> The bigger the interface, the weaker the abstraction.
+> Make the zero value useful.
+> interface{} says nothing.
+> Gofmt's style is no one's favorite, yet gofmt is everyone's favorite.
+> A little copying is better than a little dependency.
+> Syscall must always be guarded with build tags.
+> Cgo must always be guarded with build tags.
+> Cgo is not Go.
+> With the unsafe package there are no guarantees.
+> Clear is better than clever.
+> Reflection is never clear.
+> Errors are values.
+> Don't just check errors, handle them gracefully.
+> Design the architecture, name the components, document the details.
+> Documentation is for users.
+> Don't panic.
+
+Follow these conventions strictly when writing Go code.
+
+## Happy Path Coding
+
+Structure code so the successful path flows straight down. Handle errors
+immediately, then continue with main logic.
+
+```go
+// Correct: happy path flows down.
+func ProcessUser(id string) (*User, error) {
+    user, err := db.GetUser(id)
+    if err != nil {
+        return nil, fmt.Errorf("get user %s: %w", id, err)
+    }
+
+    if err := user.Validate(); err != nil {
+        return nil, fmt.Errorf("validate user %s: %w", id, err)
+    }
+
+    return user, nil
+}
+
+// Wrong: main logic nested inside conditions.
+func ProcessUser(id string) (*User, error) {
+    user, err := db.GetUser(id)
+    if err == nil {
+        if err := user.Validate(); err == nil {
+            return user, nil
+        } else {
+            return nil, err
+        }
+    }
+    return nil, err
+}
+```
+
+## Error Wrapping
+
+Always wrap errors with context using `%w`. Include the operation and relevant
+identifiers.
+
+```go
+// Correct: wrapped with context.
+if err != nil {
+    return fmt.Errorf("create order for customer %s: %w", customerID, err)
+}
+
+// Wrong: no context.
+if err != nil {
+    return err
+}
+```
+
+## Sentinel Errors
+
+Define package-level sentinel errors for expected error conditions. Use
+`errors.Is()` to check.
+
+```go
+// Define at package level.
+var (
+    ErrNotFound     = errors.New("not found")
+    ErrUnauthorized = errors.New("unauthorized")
+    ErrInvalidInput = errors.New("invalid input")
+)
+
+// Return sentinel errors.
+func GetUser(id string) (*User, error) {
+    user := db.Find(id)
+    if user == nil {
+        return nil, ErrNotFound
+    }
+    return user, nil
+}
+
+// Check with errors.Is().
+user, err := GetUser(id)
+if errors.Is(err, ErrNotFound) {
+    // Handle not found case.
+}
+```
+
+## Comments
+
+All comments end with a period.
+
+```go
+// ProcessOrder handles order creation and validation.
+func ProcessOrder(o *Order) error {
+    // Validate the order before processing.
+    if err := o.Validate(); err != nil {
+        return err
+    }
+    // Continue with order processing.
+    return nil
+}
+```
+
+## Naming Conventions
+
+Never use Go's predeclared identifiers as variable or parameter names. These
+include built-in functions and constants that can be shadowed but should not be.
+
+```go
+// Wrong: shadows built-in identifiers.
+func process(new string, len int, make bool) error {
+    copy := "data"
+    return nil
+}
+
+// Correct: use descriptive names instead.
+func process(name string, length int, shouldCreate bool) error {
+    dataCopy := "data"
+    return nil
+}
+```
+
+Predeclared identifiers to avoid:
+
+- Functions: `new`, `make`, `len`, `cap`, `append`, `copy`, `delete`, `close`,
+  `panic`, `recover`, `print`, `println`, `complex`, `real`, `imag`, `clear`,
+  `min`, `max`
+- Constants: `true`, `false`, `iota`, `nil`
+- Types: `error`, `bool`, `string`, `int`, `int8`, `int16`, `int32`, `int64`,
+  `uint`, `uint8`, `uint16`, `uint32`, `uint64`, `uintptr`, `float32`,
+  `float64`, `complex64`, `complex128`, `byte`, `rune`, `any`, `comparable`
+
+## Line Length
+
+Maximum line length is 120 characters. Break long lines at logical points.
+
+```go
+// Correct: break at logical points.
+func ProcessOrderWithValidation(
+    ctx context.Context,
+    order *Order,
+    validator OrderValidator,
+) (*Result, error) {
+    return nil, fmt.Errorf(
+        "process order %s for customer %s: %w",
+        order.ID,
+        order.CustomerID,
+        err,
+    )
+}
+```
+
+## Documentation Lookup
+
+Use `go doc` to look up standard library and package documentation:
+
+```bash
+go doc fmt.Errorf
+go doc errors.Is
+go doc context
+```
