@@ -25,7 +25,11 @@ import (
 	"github.com/ethereum/go-ethereum/common/math"
 )
 
-// ZeroKey clears the private scalar (D). Do not mutate D via Bits(); use SetInt64 so big.Int stays consistent.
+// ZeroKey clears the ECDSA private scalar (D).
+//
+// Note: Go 1.25 marks ecdsa.PrivateKey.D as deprecated to discourage operating
+// on cryptographic scalars via big.Int. Here we intentionally invalidate the
+// key after use to reduce the lifetime of sensitive material in memory.
 func ZeroKey(k *ecdsa.PrivateKey) {
 	if k == nil || k.D == nil {
 		return
