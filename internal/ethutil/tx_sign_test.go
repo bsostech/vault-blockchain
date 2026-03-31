@@ -24,8 +24,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-
-	"github.com/bsostech/vault-blockchain/internal/model"
 )
 
 // TestSignType0EIP155 verifies a type-0 EIP-155 signed tx recovers to the signer address.
@@ -248,17 +246,7 @@ func TestSignedTxResponseData(t *testing.T) {
 		t.Fatalf("sanity: tx.Type()=%d want %d.", tx.Type(), ethtypes.LegacyTxType)
 	}
 
-	acct := &model.Account{AddressStr: "0xabc"}
-
-	got, err := SignedTxResponseData(
-		tx,
-		acct,
-		&to,
-		big.NewInt(7),
-		"1",
-		21_000,
-		"legacy",
-	)
+	got, err := SignedTxResponseData(tx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,8 +257,9 @@ func TestSignedTxResponseData(t *testing.T) {
 	if got["transaction_hash"] != tx.Hash().Hex() {
 		t.Fatalf("transaction_hash=%v want %v.", got["transaction_hash"], tx.Hash().Hex())
 	}
-	if got["address_from"] != "0xabc" {
-		t.Fatalf("address_from=%v want %v.", got["address_from"], "0xabc")
+	wantFrom := crypto.PubkeyToAddress(key.PublicKey).Hex()
+	if got["address_from"] != wantFrom {
+		t.Fatalf("address_from=%v want %v.", got["address_from"], wantFrom)
 	}
 	if got["address_to"] != to.Hex() {
 		t.Fatalf("address_to=%v want %v.", got["address_to"], to.Hex())
@@ -308,8 +297,7 @@ func TestSignedTxResponseData_toNil(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	acct := &model.Account{AddressStr: "0xabc"}
-	got, err := SignedTxResponseData(tx, acct, nil, big.NewInt(0), "1", 1, "legacy")
+	got, err := SignedTxResponseData(tx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,53 +310,8 @@ func TestSignedTxResponseData_toNil(t *testing.T) {
 func TestSignedTxResponseData_nilSignedTx(t *testing.T) {
 	t.Parallel()
 
-	acct := &model.Account{AddressStr: "0xabc"}
-	_, err := SignedTxResponseData(nil, acct, nil, big.NewInt(0), "1", 1, "legacy")
+	_, err := SignedTxResponseData(nil)
 	if err == nil {
 		t.Fatal("expected error.")
-	}
-}
-
-// TestSignedTxResponseData_nilAccount verifies SignedTxResponseData returns an error when the account is nil.
-func TestSignedTxResponseData_nilAccount(t *testing.T) {
-	t.Parallel()
-
-	key, err := crypto.GenerateKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	tx, err := SignType0EIP155(big.NewInt(1), 1, 1, big.NewInt(0), nil, nil, big.NewInt(1), key)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = SignedTxResponseData(tx, nil, nil, big.NewInt(0), "1", 1, "legacy")
-	if err == nil {
-		t.Fatal("expected error.")
-	}
-}
-
-// TestSignedTxResponseData_nilValue_defaultsZero verifies nil value is treated as zero in the response map.
-func TestSignedTxResponseData_nilValue_defaultsZero(t *testing.T) {
-	t.Parallel()
-
-	key, err := crypto.GenerateKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	tx, err := SignType0EIP155(big.NewInt(1), 1, 1, big.NewInt(0), nil, nil, big.NewInt(1), key)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	acct := &model.Account{AddressStr: "0xabc"}
-	got, err := SignedTxResponseData(tx, acct, nil, nil, "1", 1, "legacy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got["value"] != "0" {
-		t.Fatalf("value=%v want %v.", got["value"], "0")
 	}
 }

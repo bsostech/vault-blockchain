@@ -25,8 +25,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
-
-	"github.com/bsostech/vault-blockchain/internal/model"
 )
 
 // SignType0EIP155 builds and signs a type-0 transaction with EIP-155.
@@ -115,42 +113,66 @@ func SignEIP1559(
 }
 
 // SignedTxResponseData builds the Vault response data map for a signed transaction.
-func SignedTxResponseData(
-	signedTx *ethtypes.Transaction,
-	account *model.Account,
-	toPtr *common.Address,
-	value *big.Int,
-	gasPriceOrFeeCap string,
-	gasLimit uint64,
-	txType string,
-) (map[string]interface{}, error) {
+//
+// The response is derived from the signed transaction itself (to/value/gas/fee/type), and the
+// sender is recovered from the signature using go-ethereum's latest signer for the tx ChainID.
+func SignedTxResponseData(signedTx *ethtypes.Transaction) (map[string]interface{}, error) {
 	if signedTx == nil {
 		return nil, fmt.Errorf("signed tx is nil")
 	}
-	if account == nil {
-		return nil, fmt.Errorf("account is nil")
+
+	chainID := signedTx.ChainId()
+	if chainID == nil {
+		return nil, fmt.Errorf("signed tx chain_id is nil")
 	}
-	if value == nil {
-		value = big.NewInt(0)
+	signer := ethtypes.LatestSignerForChainID(chainID)
+	from, err := ethtypes.Sender(signer, signedTx)
+	if err != nil {
+		return nil, fmt.Errorf("recover sender: %w", err)
 	}
+
 	// MarshalBinary returns the wire format (EIP-2718 type byte + payload for type-1/2 txs).
 	// EncodeRLP alone omits the type prefix for typed txs, which breaks ethers/eth_sendRawTransaction.
 	raw, err := signedTx.MarshalBinary()
 	if err != nil {
 		return nil, fmt.Errorf("marshal signed tx: %w", err)
 	}
+
 	toHex := ""
-	if toPtr != nil {
+	if toPtr := signedTx.To(); toPtr != nil {
 		toHex = toPtr.Hex()
 	}
+
+	txType := "unknown"
+	switch signedTx.Type() {
+	case ethtypes.LegacyTxType:
+		txType = "legacy"
+	case ethtypes.AccessListTxType:
+		txType = "eip2930"
+	case ethtypes.DynamicFeeTxType:
+		txType = "eip1559"
+	}
+
+	gasPriceOrFeeCap := ""
+	if signedTx.Type() == ethtypes.DynamicFeeTxType {
+		gasPriceOrFeeCap = signedTx.GasFeeCap().String()
+	} else {
+		gasPriceOrFeeCap = signedTx.GasPrice().String()
+	}
+
+	value := signedTx.Value()
+	if value == nil {
+		value = big.NewInt(0)
+	}
+
 	return map[string]interface{}{
 		"type":               txType,
 		"transaction_hash":   signedTx.Hash().Hex(),
 		"signed_transaction": hexutil.Encode(raw),
-		"address_from":       account.AddressStr,
+		"address_from":       from.Hex(),
 		"address_to":         toHex,
 		"value":              value.String(),
-		"gas_limit":          gasLimit,
+		"gas_limit":          signedTx.Gas(),
 		"gas_price":          gasPriceOrFeeCap,
 	}, nil
 }
