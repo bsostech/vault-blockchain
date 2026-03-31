@@ -19,7 +19,6 @@ package wallet
 
 import (
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/hashicorp/vault/sdk/logical"
@@ -29,8 +28,7 @@ import (
 func TestPaths_registerUpdateOnWriteEndpoints(t *testing.T) {
 	t.Parallel()
 
-	var walletMu sync.RWMutex
-	paths := Paths(&walletMu)
+	paths := Paths()
 	if len(paths) == 0 {
 		t.Fatal("expected non-empty paths.")
 	}

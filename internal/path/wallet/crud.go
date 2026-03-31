@@ -25,7 +25,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -38,31 +37,12 @@ import (
 // errWalletAlreadyExists indicates a seed is already stored for wallet_id.
 var errWalletAlreadyExists = errors.New("wallet_id already exists")
 
-// existenceWalletSeed reports whether a seed entry exists for wallet_id in the path data.
-func existenceWalletSeed() framework.ExistenceFunc {
-	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
-		walletID, err := model.NewFieldDataWrapper(data).MustGetString("wallet_id")
-		if err != nil || walletID == "" {
-			return false, nil
-		}
-		entry, err := req.Storage.Get(ctx, storagekey.SeedKey(walletID))
-		if err != nil {
-			return false, fmt.Errorf("wallet existence check for %s: %w", walletID, err)
-		}
-		return entry != nil, nil
-	}
-}
-
 // putWalletSeedIfAbsent writes the BIP-39 seed JSON under wallets/<id>/seed if absent.
 func putWalletSeedIfAbsent(
 	ctx context.Context,
 	req *logical.Request,
-	walletMu *sync.RWMutex,
 	walletID, mnemonic string,
 ) error {
-	walletMu.Lock()
-	defer walletMu.Unlock()
-
 	seedKey := storagekey.SeedKey(walletID)
 	existing, err := req.Storage.Get(ctx, seedKey)
 	if err != nil {
@@ -106,7 +86,7 @@ func respondWalletConflict(req *logical.Request) (*logical.Response, error) {
 }
 
 // handleWalletCreateAuto generates a 24-word mnemonic, stores it for wallet_id, and returns only the id.
-func handleWalletCreateAuto(ctx context.Context, req *logical.Request, data *framework.FieldData, walletMu *sync.RWMutex) (*logical.Response, error) {
+func handleWalletCreateAuto(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	walletID, err := model.NewFieldDataWrapper(data).MustGetString("wallet_id")
 	if err != nil || walletID == "" {
 		return logical.ErrorResponse("wallet_id is required"), nil
@@ -117,7 +97,7 @@ func handleWalletCreateAuto(ctx context.Context, req *logical.Request, data *fra
 		return nil, err
 	}
 
-	if err := putWalletSeedIfAbsent(ctx, req, walletMu, walletID, mnemonic); err != nil {
+	if err := putWalletSeedIfAbsent(ctx, req, walletID, mnemonic); err != nil {
 		if errors.Is(err, errWalletAlreadyExists) {
 			return respondWalletConflict(req)
 		}
@@ -132,7 +112,7 @@ func handleWalletCreateAuto(ctx context.Context, req *logical.Request, data *fra
 }
 
 // handleWalletImport validates and stores an existing mnemonic for wallet_id without returning it.
-func handleWalletImport(ctx context.Context, req *logical.Request, data *framework.FieldData, walletMu *sync.RWMutex) (*logical.Response, error) {
+func handleWalletImport(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	wrapper := model.NewFieldDataWrapper(data)
 	walletID, err := wrapper.MustGetString("wallet_id")
 	if err != nil {
@@ -146,7 +126,7 @@ func handleWalletImport(ctx context.Context, req *logical.Request, data *framewo
 		return logical.ErrorResponse("invalid mnemonic"), nil
 	}
 
-	if err := putWalletSeedIfAbsent(ctx, req, walletMu, walletID, mnemonic); err != nil {
+	if err := putWalletSeedIfAbsent(ctx, req, walletID, mnemonic); err != nil {
 		if errors.Is(err, errWalletAlreadyExists) {
 			return respondWalletConflict(req)
 		}
@@ -176,13 +156,6 @@ func handleListWallets(ctx context.Context, req *logical.Request, _ *framework.F
 		if _, dup := seen[id]; dup {
 			continue
 		}
-		entry, err := req.Storage.Get(ctx, storagekey.SeedKey(id))
-		if err != nil {
-			return nil, fmt.Errorf("get seed for wallet %q: %w", id, err)
-		}
-		if entry == nil {
-			continue
-		}
 		seen[id] = struct{}{}
 		ids = append(ids, id)
 	}
@@ -202,7 +175,7 @@ func handleDerivedAccountUpdateConflict(ctx context.Context, req *logical.Reques
 }
 
 // handleDerivedAccountCreate derives m/44'/60'/0'/0/<index> and persists address metadata for the wallet.
-func handleDerivedAccountCreate(ctx context.Context, req *logical.Request, data *framework.FieldData, walletMu *sync.RWMutex) (*logical.Response, error) {
+func handleDerivedAccountCreate(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	walletID, err := model.NewFieldDataWrapper(data).MustGetString("wallet_id")
 	if err != nil || walletID == "" {
 		return logical.ErrorResponse("wallet_id is required"), nil
@@ -221,9 +194,6 @@ func handleDerivedAccountCreate(ctx context.Context, req *logical.Request, data 
 			return nil, err
 		}
 	}
-
-	walletMu.Lock()
-	defer walletMu.Unlock()
 
 	acctKey := storagekey.AccountKey(walletID, indexStr)
 	if existing, err := req.Storage.Get(ctx, acctKey); err != nil {
@@ -333,15 +303,7 @@ func handleListDerivedAccounts(ctx context.Context, req *logical.Request, data *
 
 	var keys []string
 	for _, idx := range indices {
-		idxStr := fmt.Sprintf("%d", idx)
-		entry, err := req.Storage.Get(ctx, storagekey.AccountKey(walletID, idxStr))
-		if err != nil {
-			return nil, fmt.Errorf("get derived account %s/%s: %w", walletID, idxStr, err)
-		}
-		if entry == nil {
-			continue
-		}
-		keys = append(keys, idxStr)
+		keys = append(keys, fmt.Sprintf("%d", idx))
 	}
 	return logical.ListResponse(keys), nil
 }

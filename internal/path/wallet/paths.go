@@ -4,13 +4,14 @@ package wallet
 import (
 	"context"
 	"crypto/ecdsa"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"strings"
-	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -20,13 +21,13 @@ import (
 	"github.com/bsostech/vault-blockchain/pkg/utils"
 )
 
-// Paths returns all wallet (HD) paths. walletMu serializes wallet and derived-account writes.
-func Paths(walletMu *sync.RWMutex) []*framework.Path {
+// Paths returns all wallet (HD) paths.
+func Paths() []*framework.Path {
 	return []*framework.Path{
 		pathListWallets(),
-		pathWalletCreateAuto(walletMu),
-		pathWalletImport(walletMu),
-		pathDerivedAccount(walletMu),
+		pathWalletCreateAuto(),
+		pathWalletImport(),
+		pathDerivedAccount(),
 		pathListDerivedAccounts(),
 		pathWalletSignTxLegacy(),
 		pathWalletSignTxEIP1559(),
@@ -51,7 +52,7 @@ func pathListWallets() *framework.Path {
 }
 
 // pathWalletCreateAuto registers wallets/:wallet_id/create for auto-generated mnemonics.
-func pathWalletCreateAuto(walletMu *sync.RWMutex) *framework.Path {
+func pathWalletCreateAuto() *framework.Path {
 	return &framework.Path{
 		Pattern:      "wallets/" + framework.GenericNameRegex("wallet_id") + "/create",
 		HelpSynopsis: "Create a new wallet with a randomly generated BIP-39 mnemonic (24 words).",
@@ -61,10 +62,10 @@ func pathWalletCreateAuto(walletMu *sync.RWMutex) *framework.Path {
 				Description: "Logical wallet identifier in the path.",
 			},
 		},
-		ExistenceCheck: existenceWalletSeed(),
+		ExistenceCheck: ExistenceWalletSeed(),
 		Callbacks: map[logical.Operation]framework.OperationFunc{
 			logical.CreateOperation: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-				return handleWalletCreateAuto(ctx, req, data, walletMu)
+				return handleWalletCreateAuto(ctx, req, data)
 			},
 			logical.UpdateOperation: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 				_ = ctx
@@ -78,7 +79,7 @@ func pathWalletCreateAuto(walletMu *sync.RWMutex) *framework.Path {
 }
 
 // pathWalletImport registers wallets/:wallet_id/import for user-supplied mnemonics.
-func pathWalletImport(walletMu *sync.RWMutex) *framework.Path {
+func pathWalletImport() *framework.Path {
 	return &framework.Path{
 		Pattern:      "wallets/" + framework.GenericNameRegex("wallet_id") + "/import",
 		HelpSynopsis: "Create a wallet from an existing BIP-39 mnemonic.",
@@ -93,10 +94,10 @@ func pathWalletImport(walletMu *sync.RWMutex) *framework.Path {
 				Description: "BIP-39 mnemonic phrase for this wallet.",
 			},
 		},
-		ExistenceCheck: existenceWalletSeed(),
+		ExistenceCheck: ExistenceWalletSeed(),
 		Callbacks: map[logical.Operation]framework.OperationFunc{
 			logical.CreateOperation: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-				return handleWalletImport(ctx, req, data, walletMu)
+				return handleWalletImport(ctx, req, data)
 			},
 			logical.UpdateOperation: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 				_ = ctx
@@ -110,7 +111,7 @@ func pathWalletImport(walletMu *sync.RWMutex) *framework.Path {
 }
 
 // pathDerivedAccount registers CRUD-style access on wallets/:wallet_id/accounts/:index.
-func pathDerivedAccount(walletMu *sync.RWMutex) *framework.Path {
+func pathDerivedAccount() *framework.Path {
 	walletID := framework.GenericNameRegex("wallet_id")
 	return &framework.Path{
 		Pattern:      "wallets/" + walletID + "/accounts/(?P<index>\\d+)",
@@ -129,7 +130,7 @@ func pathDerivedAccount(walletMu *sync.RWMutex) *framework.Path {
 		Callbacks: map[logical.Operation]framework.OperationFunc{
 			logical.ReadOperation: handleDerivedAccountRead,
 			logical.CreateOperation: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-				return handleDerivedAccountCreate(ctx, req, data, walletMu)
+				return handleDerivedAccountCreate(ctx, req, data)
 			},
 			logical.UpdateOperation: handleDerivedAccountUpdateConflict,
 		},
@@ -400,15 +401,10 @@ func loadSigningKeyForTx(
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	account = ModelAccountFromDerivedKey(pk, derived)
-	signingKey, err = account.GetPrivateKeyECDSA()
-	if err != nil {
-		utils.ZeroKey(pk)
-		return nil, nil, nil, fmt.Errorf("ecdsa key for sign-tx: %w", err)
-	}
+	signingKey = pk
+	account = &model.Account{AddressStr: derived.Address}
 	cleanup = func() {
 		utils.ZeroKey(pk)
-		utils.ZeroKey(signingKey)
 	}
 	return signingKey, account, cleanup, nil
 }
@@ -438,7 +434,7 @@ func signType0Tx(
 		return nil, fmt.Errorf("sign type-0 tx: %w", err)
 	}
 	data, err := ethutil.SignedTxResponseData(
-		signedTx, account, toPtr, value, gasPrice.String(), gasLimit, txTypeLabelEthereumType0,
+		signedTx,
 	)
 	if err != nil {
 		return nil, err
@@ -481,7 +477,7 @@ func signEIP1559Tx(
 		return nil, fmt.Errorf("sign eip1559 tx: %w", err)
 	}
 	data, err := ethutil.SignedTxResponseData(
-		signedTx, account, toPtr, value, feeCap.String(), gasLimit, "eip1559",
+		signedTx,
 	)
 	if err != nil {
 		return nil, err
@@ -557,21 +553,9 @@ func pathWalletSignEIP712() *framework.Path {
 		Fields: map[string]*framework.FieldSchema{
 			"wallet_id": {Type: framework.TypeString},
 			"index":     {Type: framework.TypeString},
-			"domain": {
+			"payload": {
 				Type:        framework.TypeString,
-				Description: "EIP-712 domain as JSON (matches TypedData.domain).",
-			},
-			"types": {
-				Type:        framework.TypeString,
-				Description: "EIP-712 types map as JSON (matches TypedData.types).",
-			},
-			"primary_type": {
-				Type:        framework.TypeString,
-				Description: "Primary type name to sign.",
-			},
-			"message": {
-				Type:        framework.TypeString,
-				Description: "Message object as JSON (matches TypedData.message).",
+				Description: "The complete EIP-712 JSON payload (contains domain, types, primaryType, message).",
 			},
 		},
 		ExistenceCheck: ExistenceWalletDerivedAccount(),
@@ -582,10 +566,14 @@ func pathWalletSignEIP712() *framework.Path {
 	}
 }
 
-// handleWalletSignEIP712 builds TypedData from request fields and returns an EIP-712 signature for a derived address.
+// handleWalletSignEIP712 parses a TypedData payload and returns an EIP-712 signature for a derived address.
 func handleWalletSignEIP712(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	wrapper := model.NewFieldDataWrapper(data)
-	td, err := typedDataFromWrapper(wrapper)
+	payload, err := wrapper.MustGetString("payload")
+	if err != nil {
+		return nil, err
+	}
+	td, err := typedDataFromPayloadWallet(payload)
 	if err != nil {
 		return logical.ErrorResponse("%s", err.Error()), nil
 	}
@@ -614,25 +602,37 @@ func handleWalletSignEIP712(ctx context.Context, req *logical.Request, data *fra
 	}, nil
 }
 
-// typedDataFromWrapper parses domain, types, primary_type, and message JSON into TypedData.
-func typedDataFromWrapper(wrapper *model.FieldDataWrapper) (*apitypes.TypedData, error) {
-	domainJSON, err := wrapper.MustGetString("domain")
-	if err != nil {
-		return nil, err
+// typedDataFromPayloadWallet parses a single JSON payload into go-ethereum TypedData.
+//
+// Notes:
+// - Standard EIP-712 uses "primaryType" (camelCase). For ergonomics, we also accept
+//   "primary_type" (snake_case) and map it to TypedData.PrimaryType.
+func typedDataFromPayloadWallet(payload string) (*apitypes.TypedData, error) {
+	payload = strings.TrimSpace(payload)
+	if payload == "" {
+		return nil, fmt.Errorf("payload is required")
 	}
-	typesJSON, err := wrapper.MustGetString("types")
-	if err != nil {
-		return nil, err
+
+	var td apitypes.TypedData
+	if err := json.Unmarshal([]byte(payload), &td); err != nil {
+		return nil, fmt.Errorf("invalid eip712 payload JSON: %w", err)
 	}
-	primaryType, err := wrapper.MustGetString("primary_type")
-	if err != nil {
-		return nil, err
+	if strings.TrimSpace(td.PrimaryType) == "" {
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(payload), &raw); err == nil {
+			if v, ok := raw["primary_type"]; ok {
+				var pt string
+				if err := json.Unmarshal(v, &pt); err == nil {
+					td.PrimaryType = pt
+				}
+			}
+		}
 	}
-	messageJSON, err := wrapper.MustGetString("message")
-	if err != nil {
-		return nil, err
+	td.PrimaryType = strings.TrimSpace(td.PrimaryType)
+	if td.PrimaryType == "" {
+		return nil, fmt.Errorf("primaryType is required")
 	}
-	return ethutil.TypedDataFromJSON(domainJSON, typesJSON, primaryType, messageJSON)
+	return &td, nil
 }
 
 // pathWalletEncrypt registers ECIES encrypt on wallets/.../accounts/:index/encrypt.
@@ -668,12 +668,11 @@ func handleWalletEncrypt(ctx context.Context, req *logical.Request, data *framew
 	if err != nil {
 		return nil, err
 	}
-	pk, derived, err := LoadWalletDerivedPrivateKey(ctx, req.Storage, walletID, indexStr)
+	pk, _, err := LoadWalletDerivedPrivateKey(ctx, req.Storage, walletID, indexStr)
 	if err != nil {
 		return RespondLoadWalletKeyError(err)
 	}
 	defer utils.ZeroKey(pk)
-	account := ModelAccountFromDerivedKey(pk, derived)
 
 	dataToEncrypt, err := dataWrapper.MustGetString("data")
 	if err != nil {
@@ -683,10 +682,7 @@ func handleWalletEncrypt(ctx context.Context, req *logical.Request, data *framew
 	if err != nil {
 		return nil, fmt.Errorf("decode plaintext hex: %w", err)
 	}
-	publicKeyECIES, err := account.GetPublicKeyECIES()
-	if err != nil {
-		return nil, fmt.Errorf("ecies public key: %w", err)
-	}
+	publicKeyECIES := ecies.ImportECDSAPublic(&pk.PublicKey)
 	cipherText, err := ethutil.EncryptECIES(publicKeyECIES, dataBytes)
 	if err != nil {
 		return nil, fmt.Errorf("ecies encrypt: %w", err)
@@ -731,12 +727,11 @@ func handleWalletDecrypt(ctx context.Context, req *logical.Request, data *framew
 	if err != nil {
 		return nil, err
 	}
-	pk, derived, err := LoadWalletDerivedPrivateKey(ctx, req.Storage, walletID, indexStr)
+	pk, _, err := LoadWalletDerivedPrivateKey(ctx, req.Storage, walletID, indexStr)
 	if err != nil {
 		return RespondLoadWalletKeyError(err)
 	}
 	defer utils.ZeroKey(pk)
-	account := ModelAccountFromDerivedKey(pk, derived)
 
 	dataToDecrypt, err := dataWrapper.MustGetString("data")
 	if err != nil {
@@ -746,11 +741,7 @@ func handleWalletDecrypt(ctx context.Context, req *logical.Request, data *framew
 	if err != nil {
 		return nil, fmt.Errorf("decode ciphertext hex: %w", err)
 	}
-	privateKeyECIES, err := account.GetPrivateKeyECIES()
-	if err != nil {
-		return nil, fmt.Errorf("ecies private key: %w", err)
-	}
-	defer utils.ZeroKey(privateKeyECIES.ExportECDSA())
+	privateKeyECIES := ecies.ImportECDSA(pk)
 	plainText, err := ethutil.DecryptECIES(privateKeyECIES, dataBytes)
 	if err != nil {
 		return nil, fmt.Errorf("ecies decrypt: %w", err)

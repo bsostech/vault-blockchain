@@ -5,9 +5,9 @@
 // to you under the Apache License, Version 2.0 (the
 // "License"); you may not use this file except in compliance
 // with the License.  You may obtain a copy of the License at
-
+//
 //   http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
 // "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -25,7 +25,6 @@ import (
 	"strconv"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -43,6 +42,21 @@ var (
 	// ErrDerivedAccountMissing is returned when the wallet or derived account entry is absent.
 	ErrDerivedAccountMissing = errors.New("derived account not found")
 )
+
+// ExistenceWalletSeed reports whether a seed entry exists for wallet_id in the path data.
+func ExistenceWalletSeed() framework.ExistenceFunc {
+	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
+		walletID := model.NewFieldDataWrapper(data).GetString("wallet_id", "")
+		if walletID == "" {
+			return false, nil
+		}
+		entry, err := req.Storage.Get(ctx, storagekey.SeedKey(walletID))
+		if err != nil {
+			return false, fmt.Errorf("wallet existence check for %s: %w", walletID, err)
+		}
+		return entry != nil, nil
+	}
+}
 
 // ExistenceWalletDerivedAccount returns true when storage has a derived account for wallet_id and index.
 func ExistenceWalletDerivedAccount() framework.ExistenceFunc {
@@ -132,13 +146,6 @@ func LoadWalletDerivedPrivateKey(
 	return pk, &derived, nil
 }
 
-// ModelAccountFromDerivedKey builds an in-memory model.Account for ECIES/ECDSA helpers (not read from storage).
-func ModelAccountFromDerivedKey(pk *ecdsa.PrivateKey, derived *model.DerivedAccount) *model.Account {
-	privBytes := crypto.FromECDSA(pk)
-	privStr := hexutil.Encode(privBytes)[2:]
-	return model.NewAccount(derived.Address, privStr, "")
-}
-
 // RespondLoadWalletKeyError maps loader errors to logical responses for Vault handlers.
 func RespondLoadWalletKeyError(err error) (*logical.Response, error) {
 	switch {
@@ -150,3 +157,4 @@ func RespondLoadWalletKeyError(err error) (*logical.Response, error) {
 		return nil, err
 	}
 }
+

@@ -19,13 +19,12 @@ package wallet
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
-	"sync"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 	"github.com/hashicorp/vault/sdk/framework"
@@ -58,10 +57,7 @@ func walletFieldData(raw map[string]interface{}) *framework.FieldData {
 		"max_priority_fee_per_gas",
 		"maxPriorityFeePerGas",
 		"access_list",
-		"domain",
-		"types",
-		"primary_type",
-		"message",
+		"payload",
 		"mnemonic",
 	}
 
@@ -205,18 +201,13 @@ func TestHandleWalletSignEIP712_recoversAddress(t *testing.T) {
 	mustPutWalletSeed(t, ctx, s, "w3", testMnemonic)
 	derived := mustPutDerivedAccount(t, ctx, s, "w3", "0", testMnemonic)
 
-	typesJSON := `{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"}],"Mail":[{"name":"contents","type":"string"}]}`
-	domainJSON := `{"name":"VaultBlockchain","version":"1","chainId":1}`
-	messageJSON := `{"contents":"hello"}`
+	payload := `{"types":{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"}],"Mail":[{"name":"contents","type":"string"}]},"primaryType":"Mail","domain":{"name":"VaultBlockchain","version":"1","chainId":1},"message":{"contents":"hello"}}`
 
 	req := &logical.Request{Storage: s}
 	resp, err := handleWalletSignEIP712(ctx, req, walletFieldData(map[string]interface{}{
 		"wallet_id":    "w3",
 		"index":        "0",
-		"types":        typesJSON,
-		"domain":       domainJSON,
-		"primary_type": "Mail",
-		"message":      messageJSON,
+		"payload":      payload,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -227,14 +218,7 @@ func TestHandleWalletSignEIP712_recoversAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	td, err := typedDataFromWrapper(model.NewFieldDataWrapper(walletFieldData(map[string]interface{}{
-		"wallet_id":    "w3",
-		"index":        "0",
-		"types":        typesJSON,
-		"domain":       domainJSON,
-		"primary_type": "Mail",
-		"message":      messageJSON,
-	})))
+	td, err := typedDataFromPayloadWallet(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,6 +234,50 @@ func TestHandleWalletSignEIP712_recoversAddress(t *testing.T) {
 	wantAddr := common.HexToAddress(derived.Address)
 	if gotAddr != wantAddr {
 		t.Fatalf("recovered address=%s want %s.", gotAddr, wantAddr)
+	}
+}
+
+func TestHandleWalletSignEIP712_invalidPayloadReturnsLogicalError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(t, ctx, s, "weipbad", testMnemonic)
+	_ = mustPutDerivedAccount(t, ctx, s, "weipbad", "0", testMnemonic)
+
+	req := &logical.Request{Storage: s}
+	resp, err := handleWalletSignEIP712(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "weipbad",
+		"index":     "0",
+		"payload":   "{",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatalf("resp=%v want logical error response.", resp)
+	}
+}
+
+func TestHandleWalletSignEIP712_emptyPayloadReturnsLogicalError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(t, ctx, s, "weipempty", testMnemonic)
+	_ = mustPutDerivedAccount(t, ctx, s, "weipempty", "0", testMnemonic)
+
+	req := &logical.Request{Storage: s}
+	resp, err := handleWalletSignEIP712(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "weipempty",
+		"index":     "0",
+		"payload":   "   ",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatalf("resp=%v want logical error response.", resp)
 	}
 }
 
@@ -290,6 +318,30 @@ func TestHandleWalletSignTxType0_smoke(t *testing.T) {
 	if resp.Data["address_to"] != to.Hex() {
 		t.Fatalf("address_to=%v want %v.", resp.Data["address_to"], to.Hex())
 	}
+
+	signedHex, _ := resp.Data["signed_transaction"].(string)
+	raw, err := hexutil.Decode(signedHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tx ethtypes.Transaction
+	if err := tx.UnmarshalBinary(raw); err != nil {
+		t.Fatal(err)
+	}
+	if tx.Type() != ethtypes.LegacyTxType {
+		t.Fatalf("tx.Type()=%d want %d.", tx.Type(), ethtypes.LegacyTxType)
+	}
+	if tx.ChainId() == nil || tx.ChainId().Int64() != 1 {
+		t.Fatalf("tx.ChainId()=%v want 1.", tx.ChainId())
+	}
+	signer := ethtypes.LatestSignerForChainID(tx.ChainId())
+	from, err := ethtypes.Sender(signer, &tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if from != common.HexToAddress(derived.Address) {
+		t.Fatalf("recovered from=%s want %s.", from.Hex(), derived.Address)
+	}
 }
 
 // TestHandleWalletSignTxEIP1559_smoke verifies EIP-1559 sign-tx returns expected type in response data.
@@ -299,7 +351,7 @@ func TestHandleWalletSignTxEIP1559_smoke(t *testing.T) {
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
 	mustPutWalletSeed(t, ctx, s, "w5", testMnemonic)
-	_ = mustPutDerivedAccount(t, ctx, s, "w5", "0", testMnemonic)
+	derived := mustPutDerivedAccount(t, ctx, s, "w5", "0", testMnemonic)
 
 	req := &logical.Request{Storage: s}
 	resp, err := handleWalletSignTxEIP1559(ctx, req, walletFieldData(map[string]interface{}{
@@ -322,60 +374,63 @@ func TestHandleWalletSignTxEIP1559_smoke(t *testing.T) {
 	if resp.Data["type"] != "eip1559" {
 		t.Fatalf("type=%v want %v.", resp.Data["type"], "eip1559")
 	}
-}
 
-// TestTypedDataFromWrapper_rejectsInvalidJSON verifies invalid domain JSON fails parsing.
-func TestTypedDataFromWrapper_rejectsInvalidJSON(t *testing.T) {
-	t.Parallel()
-
-	w := model.NewFieldDataWrapper(walletFieldData(map[string]interface{}{
-		"domain":       "{",
-		"types":        "{}",
-		"primary_type": "Mail",
-		"message":      "{}",
-	}))
-	_, err := typedDataFromWrapper(w)
-	if err == nil {
-		t.Fatal("expected error.")
-	}
-}
-
-// TestTypedDataFromWrapper_requiresPrimaryType verifies blank primary_type is rejected.
-func TestTypedDataFromWrapper_requiresPrimaryType(t *testing.T) {
-	t.Parallel()
-
-	w := model.NewFieldDataWrapper(walletFieldData(map[string]interface{}{
-		"domain":       "{}",
-		"types":        "{}",
-		"primary_type": "   ",
-		"message":      "{}",
-	}))
-	_, err := typedDataFromWrapper(w)
-	if err == nil {
-		t.Fatal("expected error.")
-	}
-}
-
-// TestTypedDataFromWrapper_validJSON verifies minimal valid typed-data JSON parses successfully.
-func TestTypedDataFromWrapper_validJSON(t *testing.T) {
-	t.Parallel()
-
-	types := map[string]interface{}{
-		"EIP712Domain": []interface{}{},
-		"Mail":         []interface{}{},
-	}
-	typesB, err := json.Marshal(types)
+	signedHex, _ := resp.Data["signed_transaction"].(string)
+	raw, err := hexutil.Decode(signedHex)
 	if err != nil {
 		t.Fatal(err)
 	}
+	var tx ethtypes.Transaction
+	if err := tx.UnmarshalBinary(raw); err != nil {
+		t.Fatal(err)
+	}
+	if tx.Type() != ethtypes.DynamicFeeTxType {
+		t.Fatalf("tx.Type()=%d want %d.", tx.Type(), ethtypes.DynamicFeeTxType)
+	}
+	if tx.ChainId() == nil || tx.ChainId().Int64() != 1 {
+		t.Fatalf("tx.ChainId()=%v want 1.", tx.ChainId())
+	}
+	signer := ethtypes.LatestSignerForChainID(tx.ChainId())
+	from, err := ethtypes.Sender(signer, &tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if from != common.HexToAddress(derived.Address) {
+		t.Fatalf("recovered from=%s want %s.", from.Hex(), derived.Address)
+	}
+}
 
-	w := model.NewFieldDataWrapper(walletFieldData(map[string]interface{}{
-		"domain":       "{}",
-		"types":        string(typesB),
-		"primary_type": "Mail",
-		"message":      "{}",
-	}))
-	_, err = typedDataFromWrapper(w)
+func TestTypedDataFromPayloadWallet_rejectsInvalidJSON(t *testing.T) {
+	t.Parallel()
+
+	_, err := typedDataFromPayloadWallet("{")
+	if err == nil {
+		t.Fatal("expected error.")
+	}
+}
+
+func TestTypedDataFromPayloadWallet_requiresPrimaryType(t *testing.T) {
+	t.Parallel()
+
+	_, err := typedDataFromPayloadWallet(`{"types":{},"primaryType":"   ","domain":{},"message":{}}`)
+	if err == nil {
+		t.Fatal("expected error.")
+	}
+}
+
+func TestTypedDataFromPayloadWallet_validJSON(t *testing.T) {
+	t.Parallel()
+
+	_, err := typedDataFromPayloadWallet(`{"types":{"EIP712Domain":[],"Mail":[]},"primaryType":"Mail","domain":{},"message":{}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTypedDataFromPayloadWallet_acceptsSnakeCasePrimaryType(t *testing.T) {
+	t.Parallel()
+
+	_, err := typedDataFromPayloadWallet(`{"types":{"EIP712Domain":[],"Mail":[]},"primary_type":"Mail","domain":{},"message":{}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,12 +468,11 @@ func TestHandleWalletImport_invalidMnemonic(t *testing.T) {
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
 	req := &logical.Request{Storage: s}
-	var mu sync.RWMutex
 
 	resp, err := handleWalletImport(ctx, req, walletFieldData(map[string]interface{}{
 		"wallet_id": "wimp",
 		"mnemonic":  "not-a-mnemonic",
-	}), &mu)
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,7 +488,6 @@ func TestHandleWalletImport_conflictReturns409(t *testing.T) {
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
 	req := &logical.Request{Storage: s}
-	var mu sync.RWMutex
 
 	if !bip39.IsMnemonicValid(testMnemonic) {
 		t.Fatal("sanity: expected test mnemonic to be valid.")
@@ -443,7 +496,7 @@ func TestHandleWalletImport_conflictReturns409(t *testing.T) {
 	resp, err := handleWalletImport(ctx, req, walletFieldData(map[string]interface{}{
 		"wallet_id": "wdup",
 		"mnemonic":  testMnemonic,
-	}), &mu)
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +507,7 @@ func TestHandleWalletImport_conflictReturns409(t *testing.T) {
 	resp2, err := handleWalletImport(ctx, req, walletFieldData(map[string]interface{}{
 		"wallet_id": "wdup",
 		"mnemonic":  testMnemonic,
-	}), &mu)
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
