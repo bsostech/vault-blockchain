@@ -39,7 +39,9 @@ func main() {
 	tlsConfig := apiClientMeta.GetTLSConfig()
 	tlsProviderFunc := api.VaultPluginTLSProvider(tlsConfig)
 
-	err = plugin.Serve(&plugin.ServeOpts{
+	// Start the gRPC server using ServeMultiplex, the recommended and backward-compatible approach.
+	// Ref: https://developer.hashicorp.com/vault/docs/plugins/plugin-development
+	err = plugin.ServeMultiplex(&plugin.ServeOpts{
 		BackendFactoryFunc: backend.Factory,
 		TLSProviderFunc:    tlsProviderFunc,
 	})
