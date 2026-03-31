@@ -172,10 +172,7 @@ No parameters.
 
 * `wallet_id` `(string: <required>)` - Wallet identifier in the path.
 * `index` `(string: <required>)` - BIP-44 address index in the path.
-* `domain` `(string: <required>)` - EIP-712 domain as JSON.
-* `types` `(string: <required>)` - EIP-712 types map as JSON.
-* `primary_type` `(string: <required>)` - Primary type name to sign.
-* `message` `(string: <required>)` - EIP-712 message object as JSON.
+* `payload` `(string: <required>)` - The complete EIP-712 JSON payload (contains `domain`, `types`, `primaryType`, `message`).
 
 ### Wallet encrypt / decrypt data
 
@@ -251,6 +248,17 @@ No parameters.
 
 * `name` `(string: <required>)` - Name of user. You can also use UUID of user in your system.
 * `data` `(string: <required>)` - The data to hash (keccak) and sign.
+
+### Sign EIP-712
+
+| Method | Path |
+| ------ | ---- |
+| `POST` | `blockchain/accounts/:name/sign-eip712` |
+
+#### Parameters
+
+* `name` `(string: <required>)` - Logical account name in the path.
+* `payload` `(string: <required>)` - The complete EIP-712 JSON payload (contains `domain`, `types`, `primaryType`, `message`).
 
 ### Encrypt data
 

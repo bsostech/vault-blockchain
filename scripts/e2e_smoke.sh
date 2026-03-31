@@ -48,10 +48,14 @@ EXPECT_ADDR="0x9858EfFD232B4033E47d90003D41EC34EcaEda94"
 # Hex for ASCII "hello" — sign / ECIES roundtrip.
 PLAINTEXT_HEX="0x68656c6c6f"
 
-# Minimal EIP-712 payload (matches internal/path/account/sign_eip712_hash_test.go shape).
+# Minimal EIP-712 payload.
+# - payload: new API (single JSON object; matches eth_signTypedData_v4 style).
+# - split fields: legacy API (domain/types/primary_type/message).
 EIP712_TYPES='{"EIP712Domain":[{"name":"name","type":"string"}],"Person":[{"name":"name","type":"string"}]}'
 EIP712_DOMAIN='{"name":"Test Domain"}'
 EIP712_MESSAGE='{"name":"Cow"}'
+EIP712_PRIMARY_TYPE="Person"
+EIP712_PAYLOAD='{"types":{"EIP712Domain":[{"name":"name","type":"string"}],"Person":[{"name":"name","type":"string"}]},"primaryType":"Person","domain":{"name":"Test Domain"},"message":{"name":"Cow"}}'
 
 acct_base="blockchain/wallets/${E2E_WALLET}/accounts/0"
 single_base="blockchain/accounts/${E2E_ACCOUNT}"
@@ -171,11 +175,24 @@ echo "  transaction_hash: ${EIP1559_HASH}"
 echo "  signed_tx:        ${EIP1559_RAW:0:42}... (${#EIP1559_RAW} hex chars)"
 
 echo "== sign-eip712 =="
-EIP_JSON="$(vault_write_json "${acct_base}/sign-eip712" \
-  types="${EIP712_TYPES}" \
-  domain="${EIP712_DOMAIN}" \
-  primary_type=Person \
-  message="${EIP712_MESSAGE}")"
+set +e
+EIP_JSON="$(vault_write_json "${acct_base}/sign-eip712" payload="${EIP712_PAYLOAD}" 2>&1)"
+EIP_RC=$?
+set -e
+if [[ "${EIP_RC}" -ne 0 ]]; then
+  # If Vault is still running an older plugin build, sign-eip712 may require split fields.
+  if echo "${EIP_JSON}" | tr '[:upper:]' '[:lower:]' | grep -Fq "primary_type is required"; then
+    echo "  note: sign-eip712 payload rejected; retrying legacy fields (plugin likely not reloaded)"
+    EIP_JSON="$(vault_write_json "${acct_base}/sign-eip712" \
+      types="${EIP712_TYPES}" \
+      domain="${EIP712_DOMAIN}" \
+      primary_type="${EIP712_PRIMARY_TYPE}" \
+      message="${EIP712_MESSAGE}")"
+  else
+    echo "${EIP_JSON}" >&2
+    exit "${EIP_RC}"
+  fi
+fi
 EIP_SIG="$(require_jq "${EIP_JSON}" '.data.signature // empty' 'expected .data.signature from sign-eip712')"
 if [[ "${EIP_SIG}" != 0x* ]] || [[ "${#EIP_SIG}" -lt 10 ]]; then
   echo "error: unexpected eip712 signature: ${EIP_SIG}" >&2
@@ -292,11 +309,23 @@ echo "  transaction_hash: ${SK_EIP1559_HASH}"
 echo "  signed_tx:        ${SK_EIP1559_RAW:0:42}... (${#SK_EIP1559_RAW} hex chars)"
 
 echo "== single-key sign-eip712 =="
-SK_EIP_JSON="$(vault_write_json "${single_base}/sign-eip712" \
-  types="${EIP712_TYPES}" \
-  domain="${EIP712_DOMAIN}" \
-  primary_type=Person \
-  message="${EIP712_MESSAGE}")"
+set +e
+SK_EIP_JSON="$(vault_write_json "${single_base}/sign-eip712" payload="${EIP712_PAYLOAD}" 2>&1)"
+SK_EIP_RC=$?
+set -e
+if [[ "${SK_EIP_RC}" -ne 0 ]]; then
+  if echo "${SK_EIP_JSON}" | tr '[:upper:]' '[:lower:]' | grep -Fq "primary_type is required"; then
+    echo "  note: single-key sign-eip712 payload rejected; retrying legacy fields (plugin likely not reloaded)"
+    SK_EIP_JSON="$(vault_write_json "${single_base}/sign-eip712" \
+      types="${EIP712_TYPES}" \
+      domain="${EIP712_DOMAIN}" \
+      primary_type="${EIP712_PRIMARY_TYPE}" \
+      message="${EIP712_MESSAGE}")"
+  else
+    echo "${SK_EIP_JSON}" >&2
+    exit "${SK_EIP_RC}"
+  fi
+fi
 SK_EIP_SIG="$(require_jq "${SK_EIP_JSON}" '.data.signature // empty' 'expected .data.signature from single-key sign-eip712')"
 echo "  signature: ${SK_EIP_SIG}"
 
