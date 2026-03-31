@@ -23,7 +23,7 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-// Factory returns the backend
+// Factory builds and configures the plugin logical.Backend for Vault.
 func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
 	b, err := newBackend(conf)
 	if err != nil {
