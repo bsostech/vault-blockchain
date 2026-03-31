@@ -25,12 +25,12 @@ import (
 	"github.com/ethereum/go-ethereum/common/math"
 )
 
-// ZeroKey removes the key from memory
+// ZeroKey clears the private scalar (D). Do not mutate D via Bits(); use SetInt64 so big.Int stays consistent.
 func ZeroKey(k *ecdsa.PrivateKey) {
-	b := k.D.Bits()
-	for i := range b {
-		b[i] = 0
+	if k == nil || k.D == nil {
+		return
 	}
+	k.D.SetInt64(0)
 }
 
 // ValidNumber returns a valid positive integer
