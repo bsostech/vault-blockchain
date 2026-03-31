@@ -183,7 +183,11 @@ func (f *FieldDataWrapper) GetBigInt(key string, defaultValue *big.Int) *big.Int
 	if !ok {
 		return defaultValue
 	}
-	return utils.ValidNumber(value)
+	parsed := utils.ValidNumber(value)
+	if parsed == nil {
+		return defaultValue
+	}
+	return parsed
 }
 
 // MustGetBigInt parses a required decimal string field into *big.Int.
@@ -196,7 +200,11 @@ func (f *FieldDataWrapper) MustGetBigInt(key string) (*big.Int, error) {
 	if !ok {
 		return nil, f.errorTypeMismatch(key)
 	}
-	return utils.ValidNumber(value), nil
+	parsed := utils.ValidNumber(value)
+	if parsed == nil {
+		return nil, fmt.Errorf("invalid decimal integer for key %q", key)
+	}
+	return parsed, nil
 }
 
 // GetUint64 parses a decimal string field into uint64, or returns defaultValue on error.

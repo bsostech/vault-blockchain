@@ -104,6 +104,11 @@ func derivePrivateKeyAtEthereumPath(mnemonic string, index uint32) (*ecdsa.Priva
 	}
 	d := btcecPriv.Serialize()
 	btcecPriv.Zero()
+	defer func() {
+		for i := range d {
+			d[i] = 0
+		}
+	}()
 	// Use go-ethereum's ToECDSA so Curve is crypto.S256(); btcecPriv.ToECDSA() sets a different
 	// Curve identity and breaks github.com/ethereum/go-ethereum/crypto.Sign's curve check.
 	ecdsaPriv, err := crypto.ToECDSA(d)
