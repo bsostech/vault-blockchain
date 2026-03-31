@@ -18,7 +18,6 @@
 package path_test
 
 import (
-	"sync"
 	"testing"
 
 	"github.com/hashicorp/vault/sdk/framework"
@@ -32,15 +31,12 @@ import (
 func TestGetPaths(t *testing.T) {
 	t.Parallel()
 
-	var walletMu sync.RWMutex
-	var singleKeyMu sync.Mutex
-
-	got := path.GetPaths(&walletMu, &singleKeyMu)
+	got := path.GetPaths()
 	if len(got) == 0 {
 		t.Fatal("expected non-empty paths.")
 	}
 
-	wantLen := len(account.Paths(&singleKeyMu)) + len(wallet.Paths(&walletMu))
+	wantLen := len(account.Paths()) + len(wallet.Paths())
 	if len(got) != wantLen {
 		t.Fatalf("len(got)=%d want %d.", len(got), wantLen)
 	}

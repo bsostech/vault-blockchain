@@ -18,19 +18,16 @@
 package path
 
 import (
-	"sync"
-
 	"github.com/hashicorp/vault/sdk/framework"
 
 	"github.com/bsostech/vault-blockchain/internal/path/account"
 	"github.com/bsostech/vault-blockchain/internal/path/wallet"
 )
 
-// GetPaths returns all framework paths; walletMu serializes wallet and derived-account writes.
-// singleKeyAccountMu serializes single-key account creation.
-func GetPaths(walletMu *sync.RWMutex, singleKeyAccountMu *sync.Mutex) []*framework.Path {
-	acctPaths := account.Paths(singleKeyAccountMu)
-	walletPaths := wallet.Paths(walletMu)
+// GetPaths returns all framework paths.
+func GetPaths() []*framework.Path {
+	acctPaths := account.Paths()
+	walletPaths := wallet.Paths()
 	out := make([]*framework.Path, 0, len(acctPaths)+len(walletPaths))
 	out = append(out, acctPaths...)
 	out = append(out, walletPaths...)
