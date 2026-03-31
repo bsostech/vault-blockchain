@@ -19,14 +19,13 @@ package account
 
 import (
 	"context"
-	"encoding/json"
 	"math/big"
 	"net/http"
-	"sync"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 	"github.com/hashicorp/vault/sdk/framework"
@@ -68,6 +67,7 @@ func mustPutSingleKeyAccount(t *testing.T, ctx context.Context, s logical.Storag
 func fieldData(raw map[string]interface{}) *framework.FieldData {
 	baseKeys := []string{
 		"name",
+		"private_key",
 		"data",
 		"to",
 		"address_to",
@@ -83,10 +83,7 @@ func fieldData(raw map[string]interface{}) *framework.FieldData {
 		"max_priority_fee_per_gas",
 		"maxPriorityFeePerGas",
 		"access_list",
-		"domain",
-		"types",
-		"primary_type",
-		"message",
+		"payload",
 	}
 
 	schema := make(map[string]*framework.FieldSchema, len(raw)+len(baseKeys))
@@ -100,6 +97,77 @@ func fieldData(raw map[string]interface{}) *framework.FieldData {
 		schema[k] = &framework.FieldSchema{Type: framework.TypeString}
 	}
 	return &framework.FieldData{Raw: raw, Schema: schema}
+}
+
+func TestHandleSingleKeyAccountImport_success(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	req := &logical.Request{Storage: s}
+
+	pk, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { utils.ZeroKey(pk) })
+	privHexNo0x := hexutil.Encode(crypto.FromECDSA(pk))[2:]
+
+	resp, err := handleSingleKeyAccountImport(
+		ctx,
+		req,
+		fieldData(map[string]interface{}{"name": "imp1", "private_key": "0x" + privHexNo0x}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.Data == nil {
+		t.Fatal("expected response data.")
+	}
+	gotAddr, _ := resp.Data["address"].(string)
+	if gotAddr == "" {
+		t.Fatal("expected non-empty address.")
+	}
+
+	out, err := ReadSingleKeyAccount(ctx, s, "imp1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == nil {
+		t.Fatal("expected stored account.")
+	}
+	if out.PrivateKeyStr != privHexNo0x {
+		t.Fatalf("stored private_key mismatch.")
+	}
+	if hexutil.Encode(common.HexToAddress(out.AddressStr).Bytes()) != hexutil.Encode(crypto.PubkeyToAddress(pk.PublicKey).Bytes()) {
+		t.Fatalf("stored address mismatch.")
+	}
+}
+
+func TestHandleSingleKeyAccountImport_conflict(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	req := &logical.Request{Storage: s}
+
+	_, cleanup := mustPutSingleKeyAccount(t, ctx, s, "dupimp")
+	t.Cleanup(cleanup)
+
+	resp, err := handleSingleKeyAccountImport(
+		ctx,
+		req,
+		fieldData(map[string]interface{}{"name": "dupimp", "private_key": "01"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil {
+		t.Fatal("expected response.")
+	}
+	if !resp.IsError() {
+		t.Fatal("expected error response.")
+	}
 }
 
 // TestHandleSingleKeySign_roundTripRecover verifies handleSingleKeySign recovers the account address from the signature.
@@ -194,17 +262,12 @@ func TestHandleSingleKeySignEIP712_recoversAddress(t *testing.T) {
 	acct, cleanup := mustPutSingleKeyAccount(t, ctx, s, "a3")
 	t.Cleanup(cleanup)
 
-	typesJSON := `{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"}],"Mail":[{"name":"contents","type":"string"}]}`
-	domainJSON := `{"name":"VaultBlockchain","version":"1","chainId":1}`
-	messageJSON := `{"contents":"hello"}`
+	payload := `{"types":{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"}],"Mail":[{"name":"contents","type":"string"}]},"primaryType":"Mail","domain":{"name":"VaultBlockchain","version":"1","chainId":1},"message":{"contents":"hello"}}`
 
 	req := &logical.Request{Storage: s}
 	resp, err := handleSingleKeySignEIP712(ctx, req, fieldData(map[string]interface{}{
-		"name":         "a3",
-		"types":        typesJSON,
-		"domain":       domainJSON,
-		"primary_type": "Mail",
-		"message":      messageJSON,
+		"name":    "a3",
+		"payload": payload,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -215,13 +278,7 @@ func TestHandleSingleKeySignEIP712_recoversAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	td, err := typedDataFromWrapperSingleKey(model.NewFieldDataWrapper(fieldData(map[string]interface{}{
-		"name":         "a3",
-		"types":        typesJSON,
-		"domain":       domainJSON,
-		"primary_type": "Mail",
-		"message":      messageJSON,
-	})))
+	td, err := typedDataFromPayloadSingleKey(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,6 +294,48 @@ func TestHandleSingleKeySignEIP712_recoversAddress(t *testing.T) {
 	wantAddr := common.HexToAddress(acct.AddressStr)
 	if gotAddr != wantAddr {
 		t.Fatalf("recovered address=%s want %s.", gotAddr, wantAddr)
+	}
+}
+
+func TestHandleSingleKeySignEIP712_invalidPayloadReturnsLogicalError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	_, cleanup := mustPutSingleKeyAccount(t, ctx, s, "eipbad")
+	t.Cleanup(cleanup)
+
+	req := &logical.Request{Storage: s}
+	resp, err := handleSingleKeySignEIP712(ctx, req, fieldData(map[string]interface{}{
+		"name":    "eipbad",
+		"payload": "{",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatalf("resp=%v want logical error response.", resp)
+	}
+}
+
+func TestHandleSingleKeySignEIP712_emptyPayloadReturnsLogicalError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	_, cleanup := mustPutSingleKeyAccount(t, ctx, s, "eipempty")
+	t.Cleanup(cleanup)
+
+	req := &logical.Request{Storage: s}
+	resp, err := handleSingleKeySignEIP712(ctx, req, fieldData(map[string]interface{}{
+		"name":    "eipempty",
+		"payload": "   ",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatalf("resp=%v want logical error response.", resp)
 	}
 }
 
@@ -270,11 +369,36 @@ func TestHandleSingleKeySignTxType0_smoke(t *testing.T) {
 	if resp.Data["type"] != txTypeLabelEthereumType0 {
 		t.Fatalf("type=%v want %v.", resp.Data["type"], txTypeLabelEthereumType0)
 	}
-	if resp.Data["address_from"] != acct.AddressStr {
-		t.Fatalf("address_from=%v want %v.", resp.Data["address_from"], acct.AddressStr)
+	gotFrom, _ := resp.Data["address_from"].(string)
+	if common.HexToAddress(gotFrom) != common.HexToAddress(acct.AddressStr) {
+		t.Fatalf("address_from=%v want %v.", gotFrom, acct.AddressStr)
 	}
 	if resp.Data["address_to"] != to.Hex() {
 		t.Fatalf("address_to=%v want %v.", resp.Data["address_to"], to.Hex())
+	}
+
+	signedHex, _ := resp.Data["signed_transaction"].(string)
+	raw, err := hexutil.Decode(signedHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tx ethtypes.Transaction
+	if err := tx.UnmarshalBinary(raw); err != nil {
+		t.Fatal(err)
+	}
+	if tx.Type() != ethtypes.LegacyTxType {
+		t.Fatalf("tx.Type()=%d want %d.", tx.Type(), ethtypes.LegacyTxType)
+	}
+	if tx.ChainId() == nil || tx.ChainId().Int64() != 1 {
+		t.Fatalf("tx.ChainId()=%v want 1.", tx.ChainId())
+	}
+	signer := ethtypes.LatestSignerForChainID(tx.ChainId())
+	from, err := ethtypes.Sender(signer, &tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if from != common.HexToAddress(acct.AddressStr) {
+		t.Fatalf("recovered from=%s want %s.", from.Hex(), acct.AddressStr)
 	}
 }
 
@@ -284,7 +408,7 @@ func TestHandleSingleKeySignTxEIP1559_smoke(t *testing.T) {
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	_, cleanup := mustPutSingleKeyAccount(t, ctx, s, "a5")
+	acct, cleanup := mustPutSingleKeyAccount(t, ctx, s, "a5")
 	t.Cleanup(cleanup)
 
 	req := &logical.Request{Storage: s}
@@ -308,35 +432,45 @@ func TestHandleSingleKeySignTxEIP1559_smoke(t *testing.T) {
 	if resp.Data["type"] != "eip1559" {
 		t.Fatalf("type=%v want %v.", resp.Data["type"], "eip1559")
 	}
+
+	signedHex, _ := resp.Data["signed_transaction"].(string)
+	raw, err := hexutil.Decode(signedHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tx ethtypes.Transaction
+	if err := tx.UnmarshalBinary(raw); err != nil {
+		t.Fatal(err)
+	}
+	if tx.Type() != ethtypes.DynamicFeeTxType {
+		t.Fatalf("tx.Type()=%d want %d.", tx.Type(), ethtypes.DynamicFeeTxType)
+	}
+	if tx.ChainId() == nil || tx.ChainId().Int64() != 1 {
+		t.Fatalf("tx.ChainId()=%v want 1.", tx.ChainId())
+	}
+	signer := ethtypes.LatestSignerForChainID(tx.ChainId())
+	from, err := ethtypes.Sender(signer, &tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if from != common.HexToAddress(acct.AddressStr) {
+		t.Fatalf("recovered from=%s want %s.", from.Hex(), acct.AddressStr)
+	}
 }
 
-// TestTypedDataFromWrapperSingleKey_rejectsInvalidJSON verifies invalid domain JSON fails parsing.
-func TestTypedDataFromWrapperSingleKey_rejectsInvalidJSON(t *testing.T) {
+func TestTypedDataFromPayloadSingleKey_rejectsInvalidJSON(t *testing.T) {
 	t.Parallel()
 
-	w := model.NewFieldDataWrapper(fieldData(map[string]interface{}{
-		"domain":       "{",
-		"types":        "{}",
-		"primary_type": "Mail",
-		"message":      "{}",
-	}))
-	_, err := typedDataFromWrapperSingleKey(w)
+	_, err := typedDataFromPayloadSingleKey("{")
 	if err == nil {
 		t.Fatal("expected error.")
 	}
 }
 
-// TestTypedDataFromWrapperSingleKey_requiresPrimaryType verifies blank primary_type is rejected.
-func TestTypedDataFromWrapperSingleKey_requiresPrimaryType(t *testing.T) {
+func TestTypedDataFromPayloadSingleKey_requiresPrimaryType(t *testing.T) {
 	t.Parallel()
 
-	w := model.NewFieldDataWrapper(fieldData(map[string]interface{}{
-		"domain":       "{}",
-		"types":        "{}",
-		"primary_type": "   ",
-		"message":      "{}",
-	}))
-	_, err := typedDataFromWrapperSingleKey(w)
+	_, err := typedDataFromPayloadSingleKey(`{"types":{},"primaryType":"   ","domain":{},"message":{}}`)
 	if err == nil {
 		t.Fatal("expected error.")
 	}
@@ -397,26 +531,19 @@ func TestSignType0TxSingleKey_invalidGasPrice_returnsLogicalError(t *testing.T) 
 	}
 }
 
-// TestTypedDataFromWrapperSingleKey_validJSON verifies minimal valid typed-data JSON parses successfully.
-func TestTypedDataFromWrapperSingleKey_validJSON(t *testing.T) {
+func TestTypedDataFromPayloadSingleKey_validJSON(t *testing.T) {
 	t.Parallel()
 
-	types := map[string]interface{}{
-		"EIP712Domain": []interface{}{},
-		"Mail":         []interface{}{},
-	}
-	typesB, err := json.Marshal(types)
+	_, err := typedDataFromPayloadSingleKey(`{"types":{"EIP712Domain":[],"Mail":[]},"primaryType":"Mail","domain":{},"message":{}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
+}
 
-	w := model.NewFieldDataWrapper(fieldData(map[string]interface{}{
-		"domain":       "{}",
-		"types":        string(typesB),
-		"primary_type": "Mail",
-		"message":      "{}",
-	}))
-	_, err = typedDataFromWrapperSingleKey(w)
+func TestTypedDataFromPayloadSingleKey_acceptsSnakeCasePrimaryType(t *testing.T) {
+	t.Parallel()
+
+	_, err := typedDataFromPayloadSingleKey(`{"types":{"EIP712Domain":[],"Mail":[]},"primary_type":"Mail","domain":{},"message":{}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,9 +556,8 @@ func TestHandleSingleKeyAccountCreate_conflictReturns409(t *testing.T) {
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
 	req := &logical.Request{Storage: s}
-	var mu sync.Mutex
 
-	resp, err := handleSingleKeyAccountCreate(ctx, req, fieldData(map[string]interface{}{"name": "dup"}), &mu)
+	resp, err := handleSingleKeyAccountCreate(ctx, req, fieldData(map[string]interface{}{"name": "dup"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,7 +565,7 @@ func TestHandleSingleKeyAccountCreate_conflictReturns409(t *testing.T) {
 		t.Fatal("expected response.")
 	}
 
-	resp2, err := handleSingleKeyAccountCreate(ctx, req, fieldData(map[string]interface{}{"name": "dup"}), &mu)
+	resp2, err := handleSingleKeyAccountCreate(ctx, req, fieldData(map[string]interface{}{"name": "dup"}))
 	if err != nil {
 		t.Fatal(err)
 	}

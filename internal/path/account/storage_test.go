@@ -150,6 +150,45 @@ func TestExistenceSingleKeyAccount(t *testing.T) {
 	}
 }
 
+func TestExistenceSingleKeyAccountSeed(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	req := &logical.Request{Storage: s}
+
+	exists, err := account.ExistenceSingleKeyAccountSeed()(ctx, req, &framework.FieldData{
+		Raw:    map[string]interface{}{"name": ""},
+		Schema: map[string]*framework.FieldSchema{"name": {Type: framework.TypeString}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("exists=true want false.")
+	}
+
+	key := storagekey.SingleKeyAccountKey("y")
+	entry, err := logical.StorageEntryJSON(key, &model.Account{AddressStr: "0xabc", PrivateKeyStr: "deadbeef"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put(ctx, entry); err != nil {
+		t.Fatal(err)
+	}
+
+	exists, err = account.ExistenceSingleKeyAccountSeed()(ctx, req, &framework.FieldData{
+		Raw:    map[string]interface{}{"name": "y"},
+		Schema: map[string]*framework.FieldSchema{"name": {Type: framework.TypeString}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("exists=false want true.")
+	}
+}
+
 // TestRespondLoadSingleKeyAccountError maps ErrSingleKeyAccountMissing to a logical error and passes through other errors.
 func TestRespondLoadSingleKeyAccountError(t *testing.T) {
 	t.Parallel()

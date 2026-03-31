@@ -5,9 +5,9 @@
 // to you under the Apache License, Version 2.0 (the
 // "License"); you may not use this file except in compliance
 // with the License.  You may obtain a copy of the License at
-
+//
 //   http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
 // "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -67,6 +67,23 @@ func ExistenceSingleKeyAccount() framework.ExistenceFunc {
 	}
 }
 
+// ExistenceSingleKeyAccountSeed returns true when an account seed exists for name.
+//
+// This is used by create/import paths to let Vault route write operations based on existence.
+func ExistenceSingleKeyAccountSeed() framework.ExistenceFunc {
+	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
+		name := model.NewFieldDataWrapper(data).GetString("name", "")
+		if name == "" {
+			return false, nil
+		}
+		entry, err := req.Storage.Get(ctx, storagekey.SingleKeyAccountKey(name))
+		if err != nil {
+			return false, fmt.Errorf("single-key account existence check for %s: %w", name, err)
+		}
+		return entry != nil, nil
+	}
+}
+
 // RespondLoadSingleKeyAccountError maps loader errors to logical responses for Vault handlers.
 func RespondLoadSingleKeyAccountError(err error) (*logical.Response, error) {
 	if errors.Is(err, ErrSingleKeyAccountMissing) {
@@ -74,3 +91,4 @@ func RespondLoadSingleKeyAccountError(err error) (*logical.Response, error) {
 	}
 	return nil, err
 }
+

@@ -4,13 +4,14 @@ package account
 import (
 	"context"
 	"crypto/ecdsa"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"strings"
-	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -20,11 +21,12 @@ import (
 	"github.com/bsostech/vault-blockchain/pkg/utils"
 )
 
-// Paths returns all single-key account paths. singleKeyAccountMu serializes account creation.
-func Paths(singleKeyAccountMu *sync.Mutex) []*framework.Path {
+// Paths returns all single-key account paths.
+func Paths() []*framework.Path {
 	return []*framework.Path{
 		pathListSingleKeyAccounts(),
-		pathSingleKeyAccountAddress(singleKeyAccountMu),
+		pathSingleKeyAccountAddress(),
+		pathSingleKeyAccountImport(),
 		pathSingleKeySign(),
 		pathSingleKeySignTxLegacy(),
 		pathSingleKeySignTxEIP1559(),
@@ -35,7 +37,7 @@ func Paths(singleKeyAccountMu *sync.Mutex) []*framework.Path {
 }
 
 // pathSingleKeyAccountAddress registers create/read/update for accounts/:name/address.
-func pathSingleKeyAccountAddress(singleKeyAccountMu *sync.Mutex) *framework.Path {
+func pathSingleKeyAccountAddress() *framework.Path {
 	return &framework.Path{
 		Pattern:      "accounts/" + framework.GenericNameRegex("name") + "/address",
 		HelpSynopsis: "Create or read a single-key Ethereum account.",
@@ -45,13 +47,39 @@ func pathSingleKeyAccountAddress(singleKeyAccountMu *sync.Mutex) *framework.Path
 				Description: "Logical account name in the path.",
 			},
 		},
-		ExistenceCheck: existenceSingleKeyAccountSeed(),
+		ExistenceCheck: ExistenceSingleKeyAccountSeed(),
 		Callbacks: map[logical.Operation]framework.OperationFunc{
 			logical.CreateOperation: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-				return handleSingleKeyAccountCreate(ctx, req, data, singleKeyAccountMu)
+				return handleSingleKeyAccountCreate(ctx, req, data)
 			},
 			logical.UpdateOperation: handleSingleKeyAccountUpdate,
 			logical.ReadOperation:   handleSingleKeyAccountRead,
+		},
+	}
+}
+
+// pathSingleKeyAccountImport registers accounts/:name/import for importing an existing private key.
+func pathSingleKeyAccountImport() *framework.Path {
+	return &framework.Path{
+		Pattern:      "accounts/" + framework.GenericNameRegex("name") + "/import",
+		HelpSynopsis: "Import an existing single-key Ethereum account private key.",
+		Fields: map[string]*framework.FieldSchema{
+			"name": {
+				Type:        framework.TypeString,
+				Description: "Logical account name in the path.",
+			},
+			"private_key": {
+				Type:        framework.TypeString,
+				Required:    true,
+				Description: "ECDSA private key as hex string. Accepts optional 0x prefix.",
+			},
+		},
+		ExistenceCheck: ExistenceSingleKeyAccountSeed(),
+		Callbacks: map[logical.Operation]framework.OperationFunc{
+			logical.CreateOperation: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+				return handleSingleKeyAccountImport(ctx, req, data)
+			},
+			logical.UpdateOperation: handleSingleKeyAccountUpdate,
 		},
 	}
 }
@@ -221,11 +249,12 @@ func handleSingleKeyDecrypt(ctx context.Context, req *logical.Request, data *fra
 	if err != nil {
 		return nil, fmt.Errorf("decode ciphertext hex: %w", err)
 	}
-	privateKeyECIES, err := acct.GetPrivateKeyECIES()
+	ecdsaKey, err := acct.GetPrivateKeyECDSA()
 	if err != nil {
-		return nil, fmt.Errorf("ecies private key: %w", err)
+		return nil, fmt.Errorf("ecdsa private key: %w", err)
 	}
-	defer utils.ZeroKey(privateKeyECIES.ExportECDSA())
+	defer utils.ZeroKey(ecdsaKey)
+	privateKeyECIES := ecies.ImportECDSA(ecdsaKey)
 	plainText, err := ethutil.DecryptECIES(privateKeyECIES, dataBytes)
 	if err != nil {
 		return nil, fmt.Errorf("ecies decrypt: %w", err)
@@ -244,21 +273,9 @@ func pathSingleKeySignEIP712() *framework.Path {
 		HelpSynopsis: "Sign EIP-712 typed data for a single-key account.",
 		Fields: map[string]*framework.FieldSchema{
 			"name": {Type: framework.TypeString},
-			"domain": {
+			"payload": {
 				Type:        framework.TypeString,
-				Description: "EIP-712 domain as JSON (matches TypedData.domain).",
-			},
-			"types": {
-				Type:        framework.TypeString,
-				Description: "EIP-712 types map as JSON (matches TypedData.types).",
-			},
-			"primary_type": {
-				Type:        framework.TypeString,
-				Description: "Primary type name to sign.",
-			},
-			"message": {
-				Type:        framework.TypeString,
-				Description: "Message object as JSON (matches TypedData.message).",
+				Description: "The complete EIP-712 JSON payload (contains domain, types, primaryType, message).",
 			},
 		},
 		ExistenceCheck: ExistenceSingleKeyAccount(),
@@ -269,10 +286,14 @@ func pathSingleKeySignEIP712() *framework.Path {
 	}
 }
 
-// handleSingleKeySignEIP712 builds TypedData from request fields and returns an EIP-712 signature.
+// handleSingleKeySignEIP712 parses a TypedData payload and returns an EIP-712 signature.
 func handleSingleKeySignEIP712(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	wrapper := model.NewFieldDataWrapper(data)
-	td, err := typedDataFromWrapperSingleKey(wrapper)
+	payload, err := wrapper.MustGetString("payload")
+	if err != nil {
+		return nil, err
+	}
+	td, err := typedDataFromPayloadSingleKey(payload)
 	if err != nil {
 		return logical.ErrorResponse("%s", err.Error()), nil
 	}
@@ -301,25 +322,38 @@ func handleSingleKeySignEIP712(ctx context.Context, req *logical.Request, data *
 	}, nil
 }
 
-// typedDataFromWrapperSingleKey parses domain, types, primary_type, and message JSON into TypedData.
-func typedDataFromWrapperSingleKey(wrapper *model.FieldDataWrapper) (*apitypes.TypedData, error) {
-	domainJSON, err := wrapper.MustGetString("domain")
-	if err != nil {
-		return nil, err
+// typedDataFromPayloadSingleKey parses a single JSON payload into go-ethereum TypedData.
+//
+// Notes:
+// - Standard EIP-712 uses "primaryType" (camelCase). For ergonomics, we also accept
+//   "primary_type" (snake_case) and map it to TypedData.PrimaryType.
+func typedDataFromPayloadSingleKey(payload string) (*apitypes.TypedData, error) {
+	payload = strings.TrimSpace(payload)
+	if payload == "" {
+		return nil, fmt.Errorf("payload is required")
 	}
-	typesJSON, err := wrapper.MustGetString("types")
-	if err != nil {
-		return nil, err
+
+	var td apitypes.TypedData
+	if err := json.Unmarshal([]byte(payload), &td); err != nil {
+		return nil, fmt.Errorf("invalid eip712 payload JSON: %w", err)
 	}
-	primaryType, err := wrapper.MustGetString("primary_type")
-	if err != nil {
-		return nil, err
+	if strings.TrimSpace(td.PrimaryType) == "" {
+		// Try snake_case fallback.
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(payload), &raw); err == nil {
+			if v, ok := raw["primary_type"]; ok {
+				var pt string
+				if err := json.Unmarshal(v, &pt); err == nil {
+					td.PrimaryType = pt
+				}
+			}
+		}
 	}
-	messageJSON, err := wrapper.MustGetString("message")
-	if err != nil {
-		return nil, err
+	td.PrimaryType = strings.TrimSpace(td.PrimaryType)
+	if td.PrimaryType == "" {
+		return nil, fmt.Errorf("primaryType is required")
 	}
-	return ethutil.TypedDataFromJSON(domainJSON, typesJSON, primaryType, messageJSON)
+	return &td, nil
 }
 
 // patternSingleKeyAccountSignTxBase returns the path prefix for single-key sign-tx endpoints.
@@ -592,7 +626,7 @@ func signType0TxSingleKey(
 		return nil, fmt.Errorf("sign type-0 tx: %w", err)
 	}
 	data, err := ethutil.SignedTxResponseData(
-		signedTx, account, toPtr, value, gasPrice.String(), gasLimit, txTypeLabelEthereumType0,
+		signedTx,
 	)
 	if err != nil {
 		return nil, err
@@ -635,7 +669,7 @@ func signEIP1559TxSingleKey(
 		return nil, fmt.Errorf("sign eip1559 tx: %w", err)
 	}
 	data, err := ethutil.SignedTxResponseData(
-		signedTx, account, toPtr, value, feeCap.String(), gasLimit, "eip1559",
+		signedTx,
 	)
 	if err != nil {
 		return nil, err

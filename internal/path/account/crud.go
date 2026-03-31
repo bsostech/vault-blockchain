@@ -25,13 +25,11 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
-	"golang.org/x/crypto/sha3"
 
 	"github.com/bsostech/vault-blockchain/internal/model"
 	"github.com/bsostech/vault-blockchain/internal/path/storagekey"
@@ -50,32 +48,13 @@ func respondSingleKeyAccountConflict(req *logical.Request) (*logical.Response, e
 	)
 }
 
-// existenceSingleKeyAccountSeed reports whether a stored record exists for the path name field.
-func existenceSingleKeyAccountSeed() framework.ExistenceFunc {
-	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
-		name, err := model.NewFieldDataWrapper(data).MustGetString("name")
-		if err != nil || name == "" {
-			return false, nil
-		}
-		entry, err := req.Storage.Get(ctx, storagekey.SingleKeyAccountKey(name))
-		if err != nil {
-			return false, fmt.Errorf("single-key account existence check for %s: %w", name, err)
-		}
-		return entry != nil, nil
-	}
-}
-
 // putSingleKeyAccountIfAbsent writes the account JSON under accounts/<name>/address if missing.
 func putSingleKeyAccountIfAbsent(
 	ctx context.Context,
 	req *logical.Request,
-	singleKeyAccountMu *sync.Mutex,
 	name string,
 	account *model.Account,
 ) error {
-	singleKeyAccountMu.Lock()
-	defer singleKeyAccountMu.Unlock()
-
 	key := storagekey.SingleKeyAccountKey(name)
 	existing, err := req.Storage.Get(ctx, key)
 	if err != nil {
@@ -99,7 +78,6 @@ func handleSingleKeyAccountCreate(
 	ctx context.Context,
 	req *logical.Request,
 	data *framework.FieldData,
-	singleKeyAccountMu *sync.Mutex,
 ) (*logical.Response, error) {
 	name, err := model.NewFieldDataWrapper(data).MustGetString("name")
 	if err != nil || name == "" {
@@ -123,14 +101,10 @@ func handleSingleKeyAccountCreate(
 	publicKeyBytes := crypto.FromECDSAPub(publicKeyECDSA)
 	publicKeyString := hexutil.Encode(publicKeyBytes)[4:]
 
-	hash := sha3.NewLegacyKeccak256()
-	if _, err := hash.Write(publicKeyBytes[1:]); err != nil {
-		return nil, fmt.Errorf("hash public key: %w", err)
-	}
-	address := hexutil.Encode(hash.Sum(nil)[12:])
+	address := crypto.PubkeyToAddress(privateKey.PublicKey).Hex()
 
 	account := model.NewAccount(address, privateKeyString, publicKeyString)
-	if err := putSingleKeyAccountIfAbsent(ctx, req, singleKeyAccountMu, name, account); err != nil {
+	if err := putSingleKeyAccountIfAbsent(ctx, req, name, account); err != nil {
 		if errors.Is(err, errSingleKeyAccountAlreadyExists) {
 			return respondSingleKeyAccountConflict(req)
 		}
@@ -142,6 +116,57 @@ func handleSingleKeyAccountCreate(
 			"address": account.AddressStr,
 		},
 	}, nil
+}
+
+// handleSingleKeyAccountImport stores an existing private key under the given account name.
+func handleSingleKeyAccountImport(
+	ctx context.Context,
+	req *logical.Request,
+	data *framework.FieldData,
+) (*logical.Response, error) {
+	wrapper := model.NewFieldDataWrapper(data)
+	name, err := wrapper.MustGetString("name")
+	if err != nil || name == "" {
+		return logical.ErrorResponse("name is required"), nil
+	}
+	privHex, err := wrapper.MustGetString("private_key")
+	if err != nil {
+		return logical.ErrorResponse("%s", err.Error()), nil
+	}
+	privHex = normalizeHexNo0x(privHex)
+	if privHex == "" {
+		return logical.ErrorResponse("private_key is required"), nil
+	}
+
+	privateKey, err := crypto.HexToECDSA(privHex)
+	if err != nil {
+		return logical.ErrorResponse("invalid private_key"), nil
+	}
+	defer utils.ZeroKey(privateKey)
+
+	address := crypto.PubkeyToAddress(privateKey.PublicKey).Hex()
+	publicKeyBytes := crypto.FromECDSAPub(&privateKey.PublicKey)
+	publicKeyString := hexutil.Encode(publicKeyBytes)[4:]
+
+	account := model.NewAccount(address, privHex, publicKeyString)
+	if err := putSingleKeyAccountIfAbsent(ctx, req, name, account); err != nil {
+		if errors.Is(err, errSingleKeyAccountAlreadyExists) {
+			return respondSingleKeyAccountConflict(req)
+		}
+		return nil, err
+	}
+	return &logical.Response{
+		Data: map[string]interface{}{
+			"address": account.AddressStr,
+		},
+	}, nil
+}
+
+func normalizeHexNo0x(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "0x")
+	s = strings.TrimPrefix(s, "0X")
+	return s
 }
 
 // handleSingleKeyAccountUpdate rejects updates with HTTP 409 because accounts are immutable after create.
@@ -198,13 +223,6 @@ func handleSingleKeyAccountsList(
 			continue
 		}
 		if _, dup := seen[id]; dup {
-			continue
-		}
-		entry, err := req.Storage.Get(ctx, storagekey.SingleKeyAccountKey(id))
-		if err != nil {
-			return nil, fmt.Errorf("get single-key account %q: %w", id, err)
-		}
-		if entry == nil {
 			continue
 		}
 		seen[id] = struct{}{}
