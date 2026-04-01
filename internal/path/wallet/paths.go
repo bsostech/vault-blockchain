@@ -64,9 +64,7 @@ func pathWalletCreateAuto() *framework.Path {
 		},
 		ExistenceCheck: ExistenceWalletSeed(),
 		Callbacks: map[logical.Operation]framework.OperationFunc{
-			logical.CreateOperation: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-				return handleWalletCreateAuto(ctx, req, data)
-			},
+			logical.CreateOperation: handleWalletCreateAuto,
 			logical.UpdateOperation: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 				_ = ctx
 				if _, ok := data.Get("wallet_id").(string); !ok {
@@ -96,9 +94,7 @@ func pathWalletImport() *framework.Path {
 		},
 		ExistenceCheck: ExistenceWalletSeed(),
 		Callbacks: map[logical.Operation]framework.OperationFunc{
-			logical.CreateOperation: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-				return handleWalletImport(ctx, req, data)
-			},
+			logical.CreateOperation: handleWalletImport,
 			logical.UpdateOperation: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 				_ = ctx
 				if _, err := model.NewFieldDataWrapper(data).MustGetString("wallet_id"); err != nil {
@@ -128,10 +124,8 @@ func pathDerivedAccount() *framework.Path {
 		},
 		ExistenceCheck: ExistenceWalletDerivedAccount(),
 		Callbacks: map[logical.Operation]framework.OperationFunc{
-			logical.ReadOperation: handleDerivedAccountRead,
-			logical.CreateOperation: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-				return handleDerivedAccountCreate(ctx, req, data)
-			},
+			logical.ReadOperation:   handleDerivedAccountRead,
+			logical.CreateOperation: handleDerivedAccountCreate,
 			logical.UpdateOperation: handleDerivedAccountUpdateConflict,
 		},
 	}
@@ -605,8 +599,8 @@ func handleWalletSignEIP712(ctx context.Context, req *logical.Request, data *fra
 // typedDataFromPayloadWallet parses a single JSON payload into go-ethereum TypedData.
 //
 // Notes:
-// - Standard EIP-712 uses "primaryType" (camelCase). For ergonomics, we also accept
-//   "primary_type" (snake_case) and map it to TypedData.PrimaryType.
+//   - Standard EIP-712 uses "primaryType" (camelCase). For ergonomics, we also accept
+//     "primary_type" (snake_case) and map it to TypedData.PrimaryType.
 func typedDataFromPayloadWallet(payload string) (*apitypes.TypedData, error) {
 	payload = strings.TrimSpace(payload)
 	if payload == "" {

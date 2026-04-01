@@ -49,9 +49,7 @@ func pathSingleKeyAccountAddress() *framework.Path {
 		},
 		ExistenceCheck: ExistenceSingleKeyAccountSeed(),
 		Callbacks: map[logical.Operation]framework.OperationFunc{
-			logical.CreateOperation: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-				return handleSingleKeyAccountCreate(ctx, req, data)
-			},
+			logical.CreateOperation: handleSingleKeyAccountCreate,
 			logical.UpdateOperation: handleSingleKeyAccountUpdate,
 			logical.ReadOperation:   handleSingleKeyAccountRead,
 		},
@@ -76,9 +74,7 @@ func pathSingleKeyAccountImport() *framework.Path {
 		},
 		ExistenceCheck: ExistenceSingleKeyAccountSeed(),
 		Callbacks: map[logical.Operation]framework.OperationFunc{
-			logical.CreateOperation: func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-				return handleSingleKeyAccountImport(ctx, req, data)
-			},
+			logical.CreateOperation: handleSingleKeyAccountImport,
 			logical.UpdateOperation: handleSingleKeyAccountUpdate,
 		},
 	}
