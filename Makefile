@@ -5,19 +5,21 @@
 ROOT_TOKEN ?= root
 VAULT_ADDR ?= http://localhost:8200
 
+_go_gobin := $(strip $(shell go env GOBIN))
+GO_TOOL_BIN := $(if $(_go_gobin),$(_go_gobin),$(shell go env GOPATH)/bin)
+
 build-local:
 	CGO_ENABLED=0 GOOS=$(shell go env GOOS) GOARCH=$(shell go env GOARCH) go build \
 	-ldflags="-s -w" \
 	-o plugins/vault-blockchain cmd/blockchain/main.go
 
 install-lint-tools:
-	GO111MODULE=off go get -u -d golang.org/x/lint/golint
-	GO111MODULE=off go install golang.org/x/lint/golint
-	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(GOPATH)/bin v1.23.7
+	go install golang.org/x/lint/golint@latest
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
 
 lint:
-	golint -set_exit_status ./...
-	golangci-lint run ./...
+	$(GO_TOOL_BIN)/golint -set_exit_status ./...
+	$(GO_TOOL_BIN)/golangci-lint run ./...
 
 run-local:
 	vault server -dev -dev-root-token-id=${ROOT_TOKEN} -dev-plugin-dir=./plugins

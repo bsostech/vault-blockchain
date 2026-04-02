@@ -37,7 +37,7 @@ import (
 )
 
 // mustPutSingleKeyAccount stores a generated single-key account and returns a cleanup that zeroes the test key.
-func mustPutSingleKeyAccount(t *testing.T, ctx context.Context, s logical.Storage, name string) (*model.Account, func()) {
+func mustPutSingleKeyAccount(ctx context.Context, t *testing.T, s logical.Storage, name string) (*model.Account, func()) {
 	t.Helper()
 
 	pk, err := crypto.GenerateKey()
@@ -151,7 +151,7 @@ func TestHandleSingleKeyAccountImport_conflict(t *testing.T) {
 	s := new(logical.InmemStorage)
 	req := &logical.Request{Storage: s}
 
-	_, cleanup := mustPutSingleKeyAccount(t, ctx, s, "dupimp")
+	_, cleanup := mustPutSingleKeyAccount(ctx, t, s, "dupimp")
 	t.Cleanup(cleanup)
 
 	resp, err := handleSingleKeyAccountImport(
@@ -176,7 +176,7 @@ func TestHandleSingleKeySign_roundTripRecover(t *testing.T) {
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	acct, cleanup := mustPutSingleKeyAccount(t, ctx, s, "a1")
+	acct, cleanup := mustPutSingleKeyAccount(ctx, t, s, "a1")
 	t.Cleanup(cleanup)
 
 	req := &logical.Request{Storage: s}
@@ -220,7 +220,7 @@ func TestHandleSingleKeyEncryptDecrypt_roundTrip(t *testing.T) {
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	_, cleanup := mustPutSingleKeyAccount(t, ctx, s, "a2")
+	_, cleanup := mustPutSingleKeyAccount(ctx, t, s, "a2")
 	t.Cleanup(cleanup)
 
 	req := &logical.Request{Storage: s}
@@ -259,7 +259,7 @@ func TestHandleSingleKeySignEIP712_recoversAddress(t *testing.T) {
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	acct, cleanup := mustPutSingleKeyAccount(t, ctx, s, "a3")
+	acct, cleanup := mustPutSingleKeyAccount(ctx, t, s, "a3")
 	t.Cleanup(cleanup)
 
 	payload := `{"types":{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"}],"Mail":[{"name":"contents","type":"string"}]},"primaryType":"Mail","domain":{"name":"VaultBlockchain","version":"1","chainId":1},"message":{"contents":"hello"}}`
@@ -302,7 +302,7 @@ func TestHandleSingleKeySignEIP712_invalidPayloadReturnsLogicalError(t *testing.
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	_, cleanup := mustPutSingleKeyAccount(t, ctx, s, "eipbad")
+	_, cleanup := mustPutSingleKeyAccount(ctx, t, s, "eipbad")
 	t.Cleanup(cleanup)
 
 	req := &logical.Request{Storage: s}
@@ -323,7 +323,7 @@ func TestHandleSingleKeySignEIP712_emptyPayloadReturnsLogicalError(t *testing.T)
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	_, cleanup := mustPutSingleKeyAccount(t, ctx, s, "eipempty")
+	_, cleanup := mustPutSingleKeyAccount(ctx, t, s, "eipempty")
 	t.Cleanup(cleanup)
 
 	req := &logical.Request{Storage: s}
@@ -345,7 +345,7 @@ func TestHandleSingleKeySignTxType0_smoke(t *testing.T) {
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	acct, cleanup := mustPutSingleKeyAccount(t, ctx, s, "a4")
+	acct, cleanup := mustPutSingleKeyAccount(ctx, t, s, "a4")
 	t.Cleanup(cleanup)
 
 	req := &logical.Request{Storage: s}
@@ -408,7 +408,7 @@ func TestHandleSingleKeySignTxEIP1559_smoke(t *testing.T) {
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	acct, cleanup := mustPutSingleKeyAccount(t, ctx, s, "a5")
+	acct, cleanup := mustPutSingleKeyAccount(ctx, t, s, "a5")
 	t.Cleanup(cleanup)
 
 	req := &logical.Request{Storage: s}
@@ -584,8 +584,8 @@ func TestHandleSingleKeyAccountsList_sorted(t *testing.T) {
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	_, c1 := mustPutSingleKeyAccount(t, ctx, s, "b")
-	_, c2 := mustPutSingleKeyAccount(t, ctx, s, "a")
+	_, c1 := mustPutSingleKeyAccount(ctx, t, s, "b")
+	_, c2 := mustPutSingleKeyAccount(ctx, t, s, "a")
 	t.Cleanup(c1)
 	t.Cleanup(c2)
 

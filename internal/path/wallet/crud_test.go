@@ -75,7 +75,7 @@ func walletFieldData(raw map[string]interface{}) *framework.FieldData {
 }
 
 // mustPutWalletSeed stores a wallet seed JSON entry for tests.
-func mustPutWalletSeed(t *testing.T, ctx context.Context, s logical.Storage, walletID, mnemonic string) {
+func mustPutWalletSeed(ctx context.Context, t *testing.T, s logical.Storage, walletID, mnemonic string) {
 	t.Helper()
 	entry, err := logical.StorageEntryJSON(storagekey.SeedKey(walletID), &model.WalletSeed{Mnemonic: mnemonic})
 	if err != nil {
@@ -87,7 +87,7 @@ func mustPutWalletSeed(t *testing.T, ctx context.Context, s logical.Storage, wal
 }
 
 // mustPutDerivedAccount derives and stores a DerivedAccount record for wallet_id and index.
-func mustPutDerivedAccount(t *testing.T, ctx context.Context, s logical.Storage, walletID, indexStr, mnemonic string) *model.DerivedAccount {
+func mustPutDerivedAccount(ctx context.Context, t *testing.T, s logical.Storage, walletID, indexStr, mnemonic string) *model.DerivedAccount {
 	t.Helper()
 
 	indexU32, err := ParseAddressIndex(indexStr)
@@ -116,8 +116,8 @@ func TestHandleWalletSign_recoversAddress(t *testing.T) {
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	mustPutWalletSeed(t, ctx, s, "w1", testMnemonic)
-	derived := mustPutDerivedAccount(t, ctx, s, "w1", "0", testMnemonic)
+	mustPutWalletSeed(ctx, t, s, "w1", testMnemonic)
+	derived := mustPutDerivedAccount(ctx, t, s, "w1", "0", testMnemonic)
 
 	req := &logical.Request{Storage: s}
 	dataBytes := []byte("hello")
@@ -157,8 +157,8 @@ func TestHandleWalletEncryptDecrypt_roundTrip(t *testing.T) {
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	mustPutWalletSeed(t, ctx, s, "w2", testMnemonic)
-	_ = mustPutDerivedAccount(t, ctx, s, "w2", "0", testMnemonic)
+	mustPutWalletSeed(ctx, t, s, "w2", testMnemonic)
+	_ = mustPutDerivedAccount(ctx, t, s, "w2", "0", testMnemonic)
 
 	req := &logical.Request{Storage: s}
 	plaintext := []byte("secret")
@@ -198,8 +198,8 @@ func TestHandleWalletSignEIP712_recoversAddress(t *testing.T) {
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	mustPutWalletSeed(t, ctx, s, "w3", testMnemonic)
-	derived := mustPutDerivedAccount(t, ctx, s, "w3", "0", testMnemonic)
+	mustPutWalletSeed(ctx, t, s, "w3", testMnemonic)
+	derived := mustPutDerivedAccount(ctx, t, s, "w3", "0", testMnemonic)
 
 	payload := `{"types":{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"}],"Mail":[{"name":"contents","type":"string"}]},"primaryType":"Mail","domain":{"name":"VaultBlockchain","version":"1","chainId":1},"message":{"contents":"hello"}}`
 
@@ -242,8 +242,8 @@ func TestHandleWalletSignEIP712_invalidPayloadReturnsLogicalError(t *testing.T) 
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	mustPutWalletSeed(t, ctx, s, "weipbad", testMnemonic)
-	_ = mustPutDerivedAccount(t, ctx, s, "weipbad", "0", testMnemonic)
+	mustPutWalletSeed(ctx, t, s, "weipbad", testMnemonic)
+	_ = mustPutDerivedAccount(ctx, t, s, "weipbad", "0", testMnemonic)
 
 	req := &logical.Request{Storage: s}
 	resp, err := handleWalletSignEIP712(ctx, req, walletFieldData(map[string]interface{}{
@@ -264,8 +264,8 @@ func TestHandleWalletSignEIP712_emptyPayloadReturnsLogicalError(t *testing.T) {
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	mustPutWalletSeed(t, ctx, s, "weipempty", testMnemonic)
-	_ = mustPutDerivedAccount(t, ctx, s, "weipempty", "0", testMnemonic)
+	mustPutWalletSeed(ctx, t, s, "weipempty", testMnemonic)
+	_ = mustPutDerivedAccount(ctx, t, s, "weipempty", "0", testMnemonic)
 
 	req := &logical.Request{Storage: s}
 	resp, err := handleWalletSignEIP712(ctx, req, walletFieldData(map[string]interface{}{
@@ -287,8 +287,8 @@ func TestHandleWalletSignTxType0_smoke(t *testing.T) {
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	mustPutWalletSeed(t, ctx, s, "w4", testMnemonic)
-	derived := mustPutDerivedAccount(t, ctx, s, "w4", "0", testMnemonic)
+	mustPutWalletSeed(ctx, t, s, "w4", testMnemonic)
+	derived := mustPutDerivedAccount(ctx, t, s, "w4", "0", testMnemonic)
 
 	req := &logical.Request{Storage: s}
 	to := common.HexToAddress("0x0000000000000000000000000000000000000001")
@@ -350,8 +350,8 @@ func TestHandleWalletSignTxEIP1559_smoke(t *testing.T) {
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	mustPutWalletSeed(t, ctx, s, "w5", testMnemonic)
-	derived := mustPutDerivedAccount(t, ctx, s, "w5", "0", testMnemonic)
+	mustPutWalletSeed(ctx, t, s, "w5", testMnemonic)
+	derived := mustPutDerivedAccount(ctx, t, s, "w5", "0", testMnemonic)
 
 	req := &logical.Request{Storage: s}
 	resp, err := handleWalletSignTxEIP1559(ctx, req, walletFieldData(map[string]interface{}{
@@ -442,8 +442,8 @@ func TestLoadSigningKeyForTx_cleanupZeroesKey(t *testing.T) {
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	mustPutWalletSeed(t, ctx, s, "w6", testMnemonic)
-	_ = mustPutDerivedAccount(t, ctx, s, "w6", "0", testMnemonic)
+	mustPutWalletSeed(ctx, t, s, "w6", testMnemonic)
+	_ = mustPutDerivedAccount(ctx, t, s, "w6", "0", testMnemonic)
 
 	pk, _, cleanup, err := loadSigningKeyForTx(ctx, s, "w6", "0")
 	if err != nil {
@@ -526,8 +526,8 @@ func TestHandleListWallets_sorted(t *testing.T) {
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	mustPutWalletSeed(t, ctx, s, "b", testMnemonic)
-	mustPutWalletSeed(t, ctx, s, "a", testMnemonic)
+	mustPutWalletSeed(ctx, t, s, "b", testMnemonic)
+	mustPutWalletSeed(ctx, t, s, "a", testMnemonic)
 
 	req := &logical.Request{Storage: s}
 	resp, err := handleListWallets(ctx, req, walletFieldData(map[string]interface{}{}))

@@ -21,8 +21,25 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 )
+
+//nolint:staticcheck // reads Callbacks when Operations unset; production paths still register Callbacks
+func pathRegisteredOps(p *framework.Path) map[logical.Operation]bool {
+	if len(p.Operations) > 0 {
+		ops := make(map[logical.Operation]bool, len(p.Operations))
+		for op := range p.Operations {
+			ops[op] = true
+		}
+		return ops
+	}
+	ops := make(map[logical.Operation]bool)
+	for op := range p.Callbacks {
+		ops[op] = true
+	}
+	return ops
+}
 
 // TestPaths_registerUpdateOnWriteEndpoints verifies write endpoints register UpdateOperation as well as CreateOperation.
 func TestPaths_registerUpdateOnWriteEndpoints(t *testing.T) {
@@ -38,11 +55,7 @@ func TestPaths_registerUpdateOnWriteEndpoints(t *testing.T) {
 		if p == nil || p.Pattern == "" {
 			t.Fatal("expected non-nil path with non-empty pattern.")
 		}
-		ops := make(map[logical.Operation]bool, len(p.Callbacks))
-		for op := range p.Callbacks {
-			ops[op] = true
-		}
-		byPattern[p.Pattern] = ops
+		byPattern[p.Pattern] = pathRegisteredOps(p)
 	}
 
 	// These endpoints use ExistenceCheck; Vault often routes HTTP writes to UpdateOperation.
