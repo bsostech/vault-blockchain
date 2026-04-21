@@ -3,14 +3,26 @@ path "auth/userpass/users/*" {
 }
 
 path "identity/entity-alias" {
-    capabilities = [ "read", "update" ]
+    capabilities = ["read", "update" ]
 }
 
 path "identity/entity" {
     capabilities = [ "read", "update" ]
 }
 
-path "blockchain/accounts/+/address" {
-    capabilities = [ "create" ]
+path "blockchain/wallets/" {
+    capabilities = [ "list" ]
 }
 
+path "blockchain/accounts/" {
+    capabilities = [ "list" ]
+}
+
+
+path "blockchain/wallets/+/create" {
+    capabilities = [ "create", "update" ]
+}
+
+path "blockchain/wallets/+/import" {
+    capabilities = [ "create", "update" ]
+}

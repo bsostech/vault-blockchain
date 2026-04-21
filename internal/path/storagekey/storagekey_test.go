@@ -15,17 +15,30 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package path
+package storagekey_test
 
 import (
-	"github.com/hashicorp/vault/sdk/framework"
-	"github.com/hashicorp/vault/sdk/logical"
+	"testing"
+
+	"github.com/bsostech/vault-blockchain/internal/path/storagekey"
 )
 
-type config interface {
-	getPattern() string
-	getHelpSynopsis() string
-	getFields() map[string]*framework.FieldSchema
-	getExistenceFunc() framework.ExistenceFunc
-	getCallbacks() map[logical.Operation]framework.OperationFunc
+// TestKeys verifies storage-key helper output paths.
+func TestKeys(t *testing.T) {
+	t.Parallel()
+	if got := storagekey.SingleKeyAccountKey("alice"); got != "accounts/alice/address" {
+		t.Fatal(got)
+	}
+	if got := storagekey.SingleKeyAccountsRootPrefix(); got != "accounts/" {
+		t.Fatal(got)
+	}
+	if got := storagekey.SeedKey("my-id"); got != "wallets/my-id/seed" {
+		t.Fatal(got)
+	}
+	if got := storagekey.AccountKey("my-id", "3"); got != "wallets/my-id/accounts/3" {
+		t.Fatal(got)
+	}
+	if got := storagekey.AccountsListPrefix("my-id"); got != "wallets/my-id/accounts/" {
+		t.Fatal(got)
+	}
 }

@@ -5,9 +5,9 @@
 // to you under the Apache License, Version 2.0 (the
 // "License"); you may not use this file except in compliance
 // with the License.  You may obtain a copy of the License at
-
+//
 //   http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
 // "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -15,22 +15,25 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package backend
+package ethutil
 
 import (
-	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
 
-	"github.com/hashicorp/vault/sdk/logical"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 )
 
-// Factory builds and configures the plugin logical.Backend for Vault.
-func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
-	b, err := newBackend(conf)
-	if err != nil {
-		return nil, err
+// ParseAccessListJSON parses an EIP-2930 access list from JSON.
+func ParseAccessListJSON(raw string) (ethtypes.AccessList, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
 	}
-	if err := b.Setup(ctx, conf); err != nil {
-		return nil, err
+	var al ethtypes.AccessList
+	if err := json.Unmarshal([]byte(raw), &al); err != nil {
+		return nil, fmt.Errorf("access_list JSON: %w", err)
 	}
-	return b, nil
+	return al, nil
 }

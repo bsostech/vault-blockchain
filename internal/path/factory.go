@@ -19,26 +19,17 @@ package path
 
 import (
 	"github.com/hashicorp/vault/sdk/framework"
+
+	"github.com/bsostech/vault-blockchain/internal/path/account"
+	"github.com/bsostech/vault-blockchain/internal/path/wallet"
 )
 
-// GetPaths return paths
+// GetPaths returns all framework paths.
 func GetPaths() []*framework.Path {
-	return []*framework.Path{
-		getPath(&createAccountPathConfig{}),
-		getPath(&signTransactionPathConfig{}),
-		getPath(&signPathConfig{}),
-		getPath(&signBesuPrivateTransactionPathConfig{}),
-		getPath(&encryptPathConfig{}),
-		getPath(&decryptPathConfig{}),
-	}
-}
-
-func getPath(c config) *framework.Path {
-	return &framework.Path{
-		Pattern:        c.getPattern(),
-		HelpSynopsis:   c.getHelpSynopsis(),
-		Fields:         c.getFields(),
-		ExistenceCheck: c.getExistenceFunc(),
-		Callbacks:      c.getCallbacks(),
-	}
+	acctPaths := account.Paths()
+	walletPaths := wallet.Paths()
+	out := make([]*framework.Path, 0, len(acctPaths)+len(walletPaths))
+	out = append(out, acctPaths...)
+	out = append(out, walletPaths...)
+	return out
 }

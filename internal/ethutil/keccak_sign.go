@@ -5,9 +5,9 @@
 // to you under the Apache License, Version 2.0 (the
 // "License"); you may not use this file except in compliance
 // with the License.  You may obtain a copy of the License at
-
+//
 //   http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
 // "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -15,38 +15,24 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package main
+package ethutil
 
 import (
-	"log"
-	"os"
+	"crypto/ecdsa"
+	"fmt"
 
-	"github.com/hashicorp/vault/api"
-	"github.com/hashicorp/vault/sdk/plugin"
-
-	"github.com/bsostech/vault-blockchain/internal/backend"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
-func main() {
-	apiClientMeta := &api.PluginAPIClientMeta{}
-	flags := apiClientMeta.FlagSet()
-	err := flags.Parse(os.Args[1:]) // Ignore command, strictly parse flags
-	if err != nil {
-		log.Println(err)
-		os.Exit(1)
+// SignKeccak256 signs keccak256(data) using the ECDSA private key.
+func SignKeccak256(data []byte, pk *ecdsa.PrivateKey) ([]byte, error) {
+	if pk == nil {
+		return nil, fmt.Errorf("signing key is nil")
 	}
-
-	tlsConfig := apiClientMeta.GetTLSConfig()
-	tlsProviderFunc := api.VaultPluginTLSProvider(tlsConfig)
-
-	// Start the gRPC server using ServeMultiplex, the recommended and backward-compatible approach.
-	// Ref: https://developer.hashicorp.com/vault/docs/plugins/plugin-development
-	err = plugin.ServeMultiplex(&plugin.ServeOpts{
-		BackendFactoryFunc: backend.Factory,
-		TLSProviderFunc:    tlsProviderFunc,
-	})
+	hash := crypto.Keccak256Hash(data)
+	sig, err := crypto.Sign(hash.Bytes(), pk)
 	if err != nil {
-		log.Println(err)
-		os.Exit(1)
+		return nil, fmt.Errorf("sign hash: %w", err)
 	}
+	return sig, nil
 }

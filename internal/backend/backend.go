@@ -22,23 +22,26 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 
 	"github.com/bsostech/vault-blockchain/internal/path"
+	"github.com/bsostech/vault-blockchain/internal/version"
 )
 
-// backend for this plugin
+// ethereumBackend is the Vault logical backend for Ethereum wallet and single-key operations.
 type ethereumBackend struct {
 	*framework.Backend
 }
 
-// returns ethereumBackend
+// newBackend constructs the backend with paths, seal-wrap prefixes, and mutexes for handlers.
 func newBackend(conf *logical.BackendConfig) (*ethereumBackend, error) {
 	var b ethereumBackend
 	b.Backend = &framework.Backend{
-		Help: "",
+		Help:           "",
+		RunningVersion: "v" + version.Version,
 		Paths: framework.PathAppend(
 			path.GetPaths(),
 		),
 		PathsSpecial: &logical.Paths{
 			SealWrapStorage: []string{
+				"wallets/",
 				"accounts/",
 			},
 		},

@@ -27,14 +27,16 @@ import (
 	"github.com/bsostech/vault-blockchain/pkg/utils"
 )
 
-// Account is an Ethereum account
+// Account holds address and key material as hex strings. Loaded from single-key mode
+// accounts/<name>/address storage or built in-memory from a derived HD key to reuse
+// ECIES/ECDSA helpers.
 type Account struct {
 	AddressStr    string `json:"address"` // Ethereum account address derived from the private key
 	PrivateKeyStr string `json:"private_key"`
 	PublicKeyStr  string `json:"public_key"` // Ethereum public key derived from the private key
 }
 
-// NewAccount returns Account
+// NewAccount builds an Account from hex address and key strings.
 func NewAccount(addressStr string, privateKeyStr string, publicKeyStr string) *Account {
 	return &Account{
 		AddressStr:    addressStr,
@@ -43,13 +45,13 @@ func NewAccount(addressStr string, privateKeyStr string, publicKeyStr string) *A
 	}
 }
 
-// GetPrivateKeyECDSA key for signing data
+// GetPrivateKeyECDSA parses and returns the ECDSA private key for signing.
 func (a *Account) GetPrivateKeyECDSA() (*ecdsa.PrivateKey, error) {
 	// Get private key from account
 	return crypto.HexToECDSA(a.PrivateKeyStr)
 }
 
-// GetPublicKeyECDSA key for validating signature
+// GetPublicKeyECDSA derives the ECDSA public key from the stored private key hex.
 func (a *Account) GetPublicKeyECDSA() (*ecdsa.PublicKey, error) {
 	privateKeyECDSA, err := a.GetPrivateKeyECDSA()
 	if err != nil {
@@ -64,7 +66,7 @@ func (a *Account) GetPublicKeyECDSA() (*ecdsa.PublicKey, error) {
 	return publicKeyECDSA, nil
 }
 
-// GetPrivateKeyECIES key for encrypting data
+// GetPrivateKeyECIES returns the ECIES private key for decryption of ciphertext.
 func (a *Account) GetPrivateKeyECIES() (*ecies.PrivateKey, error) {
 	privateKeyECDSA, err := a.GetPrivateKeyECDSA()
 	if err != nil {
@@ -74,7 +76,7 @@ func (a *Account) GetPrivateKeyECIES() (*ecies.PrivateKey, error) {
 	return privateKeyECIES, nil
 }
 
-// GetPublicKeyECIES key for decrypting data
+// GetPublicKeyECIES returns the ECIES public key for encryption to this account.
 func (a *Account) GetPublicKeyECIES() (*ecies.PublicKey, error) {
 	publicKeyECDSA, err := a.GetPublicKeyECDSA()
 	if err != nil {
