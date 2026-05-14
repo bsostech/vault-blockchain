@@ -44,3 +44,8 @@ func AccountKey(walletID, index string) string {
 func AccountsListPrefix(walletID string) string {
 	return fmt.Sprintf("wallets/%s/accounts/", walletID)
 }
+
+// CounterKey returns the storage path for a wallet's auto-increment account counter.
+func CounterKey(walletID string) string {
+	return fmt.Sprintf("wallets/%s/counter", walletID)
+}

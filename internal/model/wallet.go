@@ -35,6 +35,11 @@ type WalletSeed struct {
 	Mnemonic string `json:"mnemonic"`
 }
 
+// WalletCounter tracks the next auto-increment index for derived accounts; stored at wallets/<wallet_id>/counter.
+type WalletCounter struct {
+	NextIndex uint32 `json:"next_index"`
+}
+
 // DerivedAccount holds public metadata for a derived address; stored at wallets/<wallet_id>/accounts/<index>.
 type DerivedAccount struct {
 	Address        string `json:"address"`

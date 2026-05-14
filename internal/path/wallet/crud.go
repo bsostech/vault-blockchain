@@ -163,47 +163,12 @@ func handleListWallets(ctx context.Context, req *logical.Request, _ *framework.F
 	return logical.ListResponse(ids), nil
 }
 
-// handleDerivedAccountUpdateConflict rejects updates with HTTP 409 because derived rows are immutable.
-func handleDerivedAccountUpdateConflict(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-	_ = ctx
-	_ = data
-	return logical.RespondWithStatusCode(
-		logical.ErrorResponse("account index already exists"),
-		req,
-		http.StatusConflict,
-	)
-}
-
-// handleDerivedAccountCreate derives m/44'/60'/0'/0/<index> and persists address metadata for the wallet.
+// handleDerivedAccountCreate derives m/44'/60'/0'/0/<counter> and persists address metadata for the wallet.
+// The index is assigned automatically using a per-wallet counter; callers do not specify it.
 func handleDerivedAccountCreate(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	walletID, err := model.NewFieldDataWrapper(data).MustGetString("wallet_id")
 	if err != nil || walletID == "" {
 		return logical.ErrorResponse("wallet_id is required"), nil
-	}
-	indexStr, err := model.NewFieldDataWrapper(data).MustGetString("index")
-	if err != nil || indexStr == "" {
-		return logical.ErrorResponse("index is required"), nil
-	}
-
-	indexVal, err := ParseAddressIndex(indexStr)
-	if err != nil {
-		switch {
-		case errors.Is(err, ErrInvalidPathIndexFormat), errors.Is(err, ErrInvalidPathIndexRange):
-			return logical.ErrorResponse("%s", err.Error()), nil
-		default:
-			return nil, err
-		}
-	}
-
-	acctKey := storagekey.AccountKey(walletID, indexStr)
-	if existing, err := req.Storage.Get(ctx, acctKey); err != nil {
-		return nil, fmt.Errorf("get derived account %s/%s: %w", walletID, indexStr, err)
-	} else if existing != nil {
-		return logical.RespondWithStatusCode(
-			logical.ErrorResponse("account index already exists"),
-			req,
-			http.StatusConflict,
-		)
 	}
 
 	seed, err := ReadWalletSeed(ctx, req.Storage, walletID)
@@ -214,24 +179,33 @@ func handleDerivedAccountCreate(ctx context.Context, req *logical.Request, data 
 		return logical.ErrorResponse("wallet not found"), nil
 	}
 
-	address, derivationPath, err := model.DeriveEthereumAccount(seed.Mnemonic, indexVal)
+	nextIndex, err := ReadWalletCounter(ctx, req.Storage, walletID)
 	if err != nil {
-		if errors.Is(err, model.ErrIndexOutOfRange) {
-			return logical.ErrorResponse("index must be 0..2147483647"), nil
-		}
-		return nil, fmt.Errorf("derive account %s/%d: %w", walletID, indexVal, err)
+		return nil, err
+	}
+	if err := model.ValidateAddressIndex(uint64(nextIndex)); err != nil {
+		return logical.ErrorResponse("account index limit reached (max 2147483647)"), nil
 	}
 
+	address, derivationPath, err := model.DeriveEthereumAccount(seed.Mnemonic, nextIndex)
+	if err != nil {
+		return nil, fmt.Errorf("derive account %s/%d: %w", walletID, nextIndex, err)
+	}
+
+	indexStr := fmt.Sprintf("%d", nextIndex)
 	derived := &model.DerivedAccount{
 		Address:        address,
 		DerivationPath: derivationPath,
 	}
-	entry, err := logical.StorageEntryJSON(acctKey, derived)
+	entry, err := logical.StorageEntryJSON(storagekey.AccountKey(walletID, indexStr), derived)
 	if err != nil {
-		return nil, fmt.Errorf("encode derived account %s: %w", acctKey, err)
+		return nil, fmt.Errorf("encode derived account %s/%s: %w", walletID, indexStr, err)
 	}
 	if err := req.Storage.Put(ctx, entry); err != nil {
-		return nil, fmt.Errorf("put derived account %s: %w", acctKey, err)
+		return nil, fmt.Errorf("put derived account %s/%s: %w", walletID, indexStr, err)
+	}
+	if err := WriteWalletCounter(ctx, req.Storage, walletID, nextIndex+1); err != nil {
+		return nil, err
 	}
 
 	return &logical.Response{
@@ -277,6 +251,7 @@ func handleDerivedAccountRead(ctx context.Context, req *logical.Request, data *f
 }
 
 // handleListDerivedAccounts returns sorted index strings for derived accounts that exist in storage.
+// Optional start and end query parameters (inclusive) filter the returned indices to a range.
 func handleListDerivedAccounts(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	walletID, err := model.NewFieldDataWrapper(data).MustGetString("wallet_id")
 	if err != nil || walletID == "" {
@@ -285,6 +260,29 @@ func handleListDerivedAccounts(ctx context.Context, req *logical.Request, data *
 	children, err := req.Storage.List(ctx, storagekey.AccountsListPrefix(walletID))
 	if err != nil {
 		return nil, fmt.Errorf("list derived accounts %s: %w", walletID, err)
+	}
+
+	startStr := model.NewFieldDataWrapper(data).GetString("start", "")
+	endStr := model.NewFieldDataWrapper(data).GetString("end", "")
+
+	hasStart := startStr != ""
+	hasEnd := endStr != ""
+
+	var startVal, endVal int
+	if hasStart {
+		startVal, err = strconv.Atoi(startStr)
+		if err != nil || startVal < 0 {
+			return logical.ErrorResponse("start must be a non-negative integer"), nil
+		}
+	}
+	if hasEnd {
+		endVal, err = strconv.Atoi(endStr)
+		if err != nil || endVal < 0 {
+			return logical.ErrorResponse("end must be a non-negative integer"), nil
+		}
+	}
+	if hasStart && hasEnd && startVal > endVal {
+		return logical.ErrorResponse("start must be <= end"), nil
 	}
 
 	indices := make([]int, 0, len(children))
@@ -297,13 +295,19 @@ func handleListDerivedAccounts(ctx context.Context, req *logical.Request, data *
 		if err != nil {
 			continue
 		}
+		if hasStart && idxInt < startVal {
+			continue
+		}
+		if hasEnd && idxInt > endVal {
+			continue
+		}
 		indices = append(indices, idxInt)
 	}
 	sort.Ints(indices)
 
-	var keys []string
-	for _, idx := range indices {
-		keys = append(keys, fmt.Sprintf("%d", idx))
+	keys := make([]string, len(indices))
+	for i, idx := range indices {
+		keys[i] = fmt.Sprintf("%d", idx)
 	}
 	return logical.ListResponse(keys), nil
 }

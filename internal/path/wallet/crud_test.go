@@ -42,6 +42,8 @@ func walletFieldData(raw map[string]interface{}) *framework.FieldData {
 	baseKeys := []string{
 		"wallet_id",
 		"index",
+		"start",
+		"end",
 		"data",
 		"to",
 		"address_to",
@@ -542,3 +544,136 @@ func TestHandleListWallets_sorted(t *testing.T) {
 		t.Fatalf("keys=%v want [a b].", keys)
 	}
 }
+
+// TestHandleDerivedAccountCreate_autoIncrement verifies successive creates assign index 0, 1.
+func TestHandleDerivedAccountCreate_autoIncrement(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wauto", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	// First create → index 0.
+	resp, err := handleDerivedAccountCreate(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wauto",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp)
+	}
+	if got := resp.Data["account_index"]; got != "0" {
+		t.Fatalf("account_index=%v want 0.", got)
+	}
+
+	// Second create → index 1.
+	resp2, err := handleDerivedAccountCreate(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wauto",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp2 == nil || resp2.IsError() {
+		t.Fatalf("unexpected error response: %v", resp2)
+	}
+	if got := resp2.Data["account_index"]; got != "1" {
+		t.Fatalf("account_index=%v want 1.", got)
+	}
+}
+
+// TestHandleDerivedAccountCreate_missingWalletReturnsLogicalError verifies missing wallet returns an error response.
+func TestHandleDerivedAccountCreate_missingWalletReturnsLogicalError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	req := &logical.Request{Storage: s}
+
+	resp, err := handleDerivedAccountCreate(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "nonexistent",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for missing wallet.")
+	}
+}
+
+// TestHandleListDerivedAccounts_noRange verifies all stored indices are returned when no range is given.
+func TestHandleListDerivedAccounts_noRange(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wlist", testMnemonic)
+	mustPutDerivedAccount(ctx, t, s, "wlist", "0", testMnemonic)
+	mustPutDerivedAccount(ctx, t, s, "wlist", "2", testMnemonic)
+	mustPutDerivedAccount(ctx, t, s, "wlist", "5", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	resp, err := handleListDerivedAccounts(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wlist",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, _ := resp.Data["keys"].([]string)
+	if len(keys) != 3 || keys[0] != "0" || keys[1] != "2" || keys[2] != "5" {
+		t.Fatalf("keys=%v want [0 2 5].", keys)
+	}
+}
+
+// TestHandleListDerivedAccounts_rangeFilter verifies start/end parameters filter the results.
+func TestHandleListDerivedAccounts_rangeFilter(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wrange", testMnemonic)
+	for _, idx := range []string{"0", "1", "2", "3", "4"} {
+		mustPutDerivedAccount(ctx, t, s, "wrange", idx, testMnemonic)
+	}
+	req := &logical.Request{Storage: s}
+
+	resp, err := handleListDerivedAccounts(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wrange",
+		"start":     "1",
+		"end":       "3",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, _ := resp.Data["keys"].([]string)
+	if len(keys) != 3 || keys[0] != "1" || keys[1] != "2" || keys[2] != "3" {
+		t.Fatalf("keys=%v want [1 2 3].", keys)
+	}
+}
+
+// TestHandleListDerivedAccounts_startOnly verifies only start bound filters correctly.
+func TestHandleListDerivedAccounts_startOnly(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wstart", testMnemonic)
+	for _, idx := range []string{"0", "1", "2", "3"} {
+		mustPutDerivedAccount(ctx, t, s, "wstart", idx, testMnemonic)
+	}
+	req := &logical.Request{Storage: s}
+
+	resp, err := handleListDerivedAccounts(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wstart",
+		"start":     "2",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, _ := resp.Data["keys"].([]string)
+	if len(keys) != 2 || keys[0] != "2" || keys[1] != "3" {
+		t.Fatalf("keys=%v want [2 3].", keys)
+	}
+}
+

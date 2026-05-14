@@ -106,12 +106,12 @@ func pathWalletImport() *framework.Path {
 	}
 }
 
-// pathDerivedAccount registers CRUD-style access on wallets/:wallet_id/accounts/:index.
+// pathDerivedAccount registers read access on wallets/:wallet_id/accounts/:index.
 func pathDerivedAccount() *framework.Path {
 	walletID := framework.GenericNameRegex("wallet_id")
 	return &framework.Path{
 		Pattern:      "wallets/" + walletID + "/accounts/(?P<index>\\d+)",
-		HelpSynopsis: "Create, update, or read a derived Ethereum account at m/44'/60'/0'/0/<index>",
+		HelpSynopsis: "Read a derived Ethereum account at m/44'/60'/0'/0/<index>.",
 		Fields: map[string]*framework.FieldSchema{
 			"wallet_id": {
 				Type:        framework.TypeString,
@@ -124,25 +124,35 @@ func pathDerivedAccount() *framework.Path {
 		},
 		ExistenceCheck: ExistenceWalletDerivedAccount(),
 		Callbacks: map[logical.Operation]framework.OperationFunc{
-			logical.ReadOperation:   handleDerivedAccountRead,
-			logical.CreateOperation: handleDerivedAccountCreate,
-			logical.UpdateOperation: handleDerivedAccountUpdateConflict,
+			logical.ReadOperation: handleDerivedAccountRead,
 		},
 	}
 }
 
-// pathListDerivedAccounts registers LIST on wallets/:wallet_id/accounts/ for index keys.
+// pathListDerivedAccounts registers LIST and auto-create on wallets/:wallet_id/accounts/.
+// LIST accepts optional start and end query parameters to filter indices (inclusive range).
+// POST derives and stores the next account using the auto-increment counter.
 func pathListDerivedAccounts() *framework.Path {
 	walletID := framework.GenericNameRegex("wallet_id")
 	return &framework.Path{
 		Pattern:      "wallets/" + walletID + "/accounts/?",
-		HelpSynopsis: "List derived account indices with address and derivation_path",
+		HelpSynopsis: "List derived account indices (with optional range filter) or auto-create the next account.",
 		Fields: map[string]*framework.FieldSchema{
 			"wallet_id": {Type: framework.TypeString},
+			"start": {
+				Type:        framework.TypeString,
+				Description: "Inclusive lower bound for index range filter (non-negative integer). Optional.",
+			},
+			"end": {
+				Type:        framework.TypeString,
+				Description: "Inclusive upper bound for index range filter (non-negative integer). Optional.",
+			},
 		},
-		ExistenceCheck: nil,
+		ExistenceCheck: ExistenceWalletDerivedAccountsRoot(),
 		Callbacks: map[logical.Operation]framework.OperationFunc{
-			logical.ListOperation: handleListDerivedAccounts,
+			logical.ListOperation:   handleListDerivedAccounts,
+			logical.CreateOperation: handleDerivedAccountCreate,
+			logical.UpdateOperation: handleDerivedAccountCreate,
 		},
 	}
 }

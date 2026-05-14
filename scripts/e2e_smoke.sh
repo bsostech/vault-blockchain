@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # End-to-end checks against a live Vault with blockchain/ mounted.
-# Covers: wallet import, read derived, list wallets/accounts, sign, sign-tx/legacy + sign-tx/eip1559,
-# sign-eip712, ECIES encrypt/decrypt roundtrip.
+# Covers: wallet import, auto-derive first account, read derived, list wallets/accounts, sign,
+# sign-tx/legacy + sign-tx/eip1559, sign-eip712, ECIES encrypt/decrypt roundtrip.
 # Uses a fixed BIP-39 test vector so the derived address is deterministic.
 #
 # There is no standalone read/write on blockchain/wallets/:wallet_id (touch was removed); use LIST
 # wallets/ or derived account paths instead.
 #
-# Wallet paths under .../accounts/:index/{sign,sign-tx,...} register both Create and Update with
-# the same handler so Vault can route HTTP writes after ExistenceCheck (usually Update).
+# New derived accounts are created with vault write -force on .../wallets/:id/accounts/ (server picks
+# the next index). Per-index paths .../accounts/:index/{sign,sign-tx,...} still register Create and
+# Update with the same handler so Vault can route HTTP writes after ExistenceCheck (usually Update).
 #
 # If vault read returns 405 unsupported operation after you rebuild the plugin, the mount may
 # still be running an old process — run make setup-plugin-local (catalog + plugin reload).
@@ -57,6 +58,7 @@ EIP712_MESSAGE='{"name":"Cow"}'
 EIP712_PRIMARY_TYPE="Person"
 EIP712_PAYLOAD='{"types":{"EIP712Domain":[{"name":"name","type":"string"}],"Person":[{"name":"name","type":"string"}]},"primaryType":"Person","domain":{"name":"Test Domain"},"message":{"name":"Cow"}}'
 
+wallet_accounts_root="blockchain/wallets/${E2E_WALLET}/accounts/"
 acct_base="blockchain/wallets/${E2E_WALLET}/accounts/0"
 single_base="blockchain/accounts/${E2E_ACCOUNT}"
 
@@ -94,9 +96,15 @@ vault_write_force_json() {
 echo "== import wallet ${E2E_WALLET} (deterministic mnemonic) =="
 vault write "blockchain/wallets/${E2E_WALLET}/import" mnemonic="${MNEMONIC}"
 
-echo "== derive account index 0 =="
-# Vault CLI requires -force when there are no key=value fields; wallet_id and index come from the path.
-vault write -force "${acct_base}"
+echo "== auto-derive first account (assigned index 0) =="
+# Create is on .../accounts/ (no index in path); Vault CLI needs -force when there are no k=v fields.
+DERIVE_JSON="$(vault_write_force_json "${wallet_accounts_root}")"
+IDX="$(require_jq "${DERIVE_JSON}" '.data.account_index // empty' 'expected .data.account_index from derive')"
+if [[ "${IDX}" != "0" ]]; then
+  echo "error: expected first account_index 0, got ${IDX}" >&2
+  echo "${DERIVE_JSON}" >&2
+  exit 1
+fi
 
 echo "== read derived account =="
 OUT="$(vault read -format=json "${acct_base}")"
