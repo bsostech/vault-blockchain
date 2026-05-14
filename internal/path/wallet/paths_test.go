@@ -19,6 +19,7 @@ package wallet
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/hashicorp/vault/sdk/framework"
@@ -45,7 +46,8 @@ func pathRegisteredOps(p *framework.Path) map[logical.Operation]bool {
 func TestPaths_registerUpdateOnWriteEndpoints(t *testing.T) {
 	t.Parallel()
 
-	paths := Paths()
+	var walletMu sync.Map
+	paths := Paths(&walletMu)
 	if len(paths) == 0 {
 		t.Fatal("expected non-empty paths.")
 	}
@@ -91,4 +93,54 @@ func TestPaths_registerUpdateOnWriteEndpoints(t *testing.T) {
 			t.Fatalf("pattern %q missing UpdateOperation.", foundPattern)
 		}
 	}
+}
+
+// TestPaths_batchDerivedAccounts_registersCreateUpdate verifies batch path wires Create and Update.
+func TestPaths_batchDerivedAccounts_registersCreateUpdate(t *testing.T) {
+	t.Parallel()
+
+	var walletMu sync.Map
+	paths := Paths(&walletMu)
+	var batchPattern string
+	for _, p := range paths {
+		if p == nil {
+			continue
+		}
+		if strings.HasSuffix(p.Pattern, "/accounts/batch") {
+			batchPattern = p.Pattern
+			ops := pathRegisteredOps(p)
+			if !ops[logical.CreateOperation] || !ops[logical.UpdateOperation] {
+				t.Fatalf("pattern %q ops=%v want Create+Update.", p.Pattern, ops)
+			}
+			break
+		}
+	}
+	if batchPattern == "" {
+		t.Fatal("missing wallets/*/accounts/batch path.")
+	}
+}
+
+// TestPaths_listDerivedAccounts_registersRead verifies the accounts/? path wires ReadOperation
+// alongside the existing List, Create, and Update operations.
+func TestPaths_listDerivedAccounts_registersRead(t *testing.T) {
+	t.Parallel()
+
+	var walletMu sync.Map
+	for _, p := range Paths(&walletMu) {
+		if p == nil || !strings.HasSuffix(p.Pattern, "/accounts/?") {
+			continue
+		}
+		ops := pathRegisteredOps(p)
+		if !ops[logical.ReadOperation] {
+			t.Fatalf("pattern %q missing ReadOperation.", p.Pattern)
+		}
+		if !ops[logical.ListOperation] {
+			t.Fatalf("pattern %q missing ListOperation.", p.Pattern)
+		}
+		if !ops[logical.CreateOperation] || !ops[logical.UpdateOperation] {
+			t.Fatalf("pattern %q missing Create+Update.", p.Pattern)
+		}
+		return
+	}
+	t.Fatal("missing wallets/*/accounts/? path.")
 }

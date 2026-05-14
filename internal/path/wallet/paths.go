@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -22,13 +23,14 @@ import (
 )
 
 // Paths returns all wallet (HD) paths.
-func Paths() []*framework.Path {
+func Paths(walletMu *sync.Map) []*framework.Path {
 	return []*framework.Path{
 		pathListWallets(),
 		pathWalletCreateAuto(),
 		pathWalletImport(),
 		pathDerivedAccount(),
-		pathListDerivedAccounts(),
+		pathBatchDerivedAccounts(walletMu),
+		pathListDerivedAccounts(walletMu),
 		pathWalletSignTxLegacy(),
 		pathWalletSignTxEIP1559(),
 		pathWalletSign(),
@@ -106,12 +108,12 @@ func pathWalletImport() *framework.Path {
 	}
 }
 
-// pathDerivedAccount registers CRUD-style access on wallets/:wallet_id/accounts/:index.
+// pathDerivedAccount registers read access on wallets/:wallet_id/accounts/:index.
 func pathDerivedAccount() *framework.Path {
 	walletID := framework.GenericNameRegex("wallet_id")
 	return &framework.Path{
 		Pattern:      "wallets/" + walletID + "/accounts/(?P<index>\\d+)",
-		HelpSynopsis: "Create, update, or read a derived Ethereum account at m/44'/60'/0'/0/<index>",
+		HelpSynopsis: "Read a derived Ethereum account at m/44'/60'/0'/0/<index>.",
 		Fields: map[string]*framework.FieldSchema{
 			"wallet_id": {
 				Type:        framework.TypeString,
@@ -124,25 +126,60 @@ func pathDerivedAccount() *framework.Path {
 		},
 		ExistenceCheck: ExistenceWalletDerivedAccount(),
 		Callbacks: map[logical.Operation]framework.OperationFunc{
-			logical.ReadOperation:   handleDerivedAccountRead,
-			logical.CreateOperation: handleDerivedAccountCreate,
-			logical.UpdateOperation: handleDerivedAccountUpdateConflict,
+			logical.ReadOperation: handleDerivedAccountRead,
 		},
 	}
 }
 
-// pathListDerivedAccounts registers LIST on wallets/:wallet_id/accounts/ for index keys.
-func pathListDerivedAccounts() *framework.Path {
+// pathBatchDerivedAccounts registers POST on wallets/:wallet_id/accounts/batch to create
+// multiple derived accounts in one request (bounded by maxBatchDerivedAccounts in crud.go).
+func pathBatchDerivedAccounts(walletMu *sync.Map) *framework.Path {
+	walletID := framework.GenericNameRegex("wallet_id")
+	return &framework.Path{
+		Pattern:      "wallets/" + walletID + "/accounts/batch",
+		HelpSynopsis: "Create multiple derived Ethereum accounts at consecutive counter indices.",
+		Fields: map[string]*framework.FieldSchema{
+			"wallet_id": {Type: framework.TypeString},
+			"count": {
+				Type:        framework.TypeString,
+				Required:    true,
+				Description: "Number of accounts to create (positive integer, max 10000).",
+			},
+		},
+		ExistenceCheck: ExistenceWalletDerivedAccountsRoot(),
+		Callbacks: map[logical.Operation]framework.OperationFunc{
+			logical.CreateOperation: makeHandleBatchDerivedAccountCreate(walletMu),
+			logical.UpdateOperation: makeHandleBatchDerivedAccountCreate(walletMu),
+		},
+	}
+}
+
+// pathListDerivedAccounts registers LIST, auto-create, and range-read on wallets/:wallet_id/accounts/.
+// POST derives and stores the next account using the auto-increment counter; walletMu ensures
+// the counter read-increment-write sequence is atomic within a single Vault active node.
+// GET (ReadOperation) with query params start and end returns an inclusive range of account metadata.
+func pathListDerivedAccounts(walletMu *sync.Map) *framework.Path {
 	walletID := framework.GenericNameRegex("wallet_id")
 	return &framework.Path{
 		Pattern:      "wallets/" + walletID + "/accounts/?",
-		HelpSynopsis: "List derived account indices with address and derivation_path",
+		HelpSynopsis: "List derived account indices, auto-create the next account, or range-read account metadata.",
 		Fields: map[string]*framework.FieldSchema{
 			"wallet_id": {Type: framework.TypeString},
+			"start": {
+				Type:        framework.TypeString,
+				Description: "Inclusive lower index for range read (required with end; use with GET).",
+			},
+			"end": {
+				Type:        framework.TypeString,
+				Description: "Inclusive upper index for range read (required with start; use with GET).",
+			},
 		},
-		ExistenceCheck: nil,
+		ExistenceCheck: ExistenceWalletDerivedAccountsRoot(),
 		Callbacks: map[logical.Operation]framework.OperationFunc{
-			logical.ListOperation: handleListDerivedAccounts,
+			logical.ListOperation:   handleListDerivedAccounts,
+			logical.ReadOperation:   handleReadDerivedAccountsRange,
+			logical.CreateOperation: makeHandleDerivedAccountCreate(walletMu),
+			logical.UpdateOperation: makeHandleDerivedAccountCreate(walletMu),
 		},
 	}
 }

@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # End-to-end checks against a live Vault with blockchain/ mounted.
-# Covers: wallet import, read derived, list wallets/accounts, sign, sign-tx/legacy + sign-tx/eip1559,
-# sign-eip712, ECIES encrypt/decrypt roundtrip.
+# Covers: wallet import, auto-derive first account, batch derive (accounts/batch), read derived,
+# list wallets/accounts, range-read derived accounts (GET accounts?start=N&end=M), sign, sign-tx/legacy + sign-tx/eip1559, sign-eip712, ECIES encrypt/decrypt
+# roundtrip.
 # Uses a fixed BIP-39 test vector so the derived address is deterministic.
 #
 # There is no standalone read/write on blockchain/wallets/:wallet_id (touch was removed); use LIST
 # wallets/ or derived account paths instead.
 #
-# Wallet paths under .../accounts/:index/{sign,sign-tx,...} register both Create and Update with
-# the same handler so Vault can route HTTP writes after ExistenceCheck (usually Update).
+# New derived accounts are created with vault write -force on .../wallets/:id/accounts/ (server picks
+# the next index), or vault write .../wallets/:id/accounts/batch count=N (up to 10000 per request).
+# Per-index paths .../accounts/:index/{sign,sign-tx,...} still register Create and
+# Update with the same handler so Vault can route HTTP writes after ExistenceCheck (usually Update).
 #
 # If vault read returns 405 unsupported operation after you rebuild the plugin, the mount may
 # still be running an old process — run make setup-plugin-local (catalog + plugin reload).
@@ -57,6 +60,9 @@ EIP712_MESSAGE='{"name":"Cow"}'
 EIP712_PRIMARY_TYPE="Person"
 EIP712_PAYLOAD='{"types":{"EIP712Domain":[{"name":"name","type":"string"}],"Person":[{"name":"name","type":"string"}]},"primaryType":"Person","domain":{"name":"Test Domain"},"message":{"name":"Cow"}}'
 
+wallet_accounts_root="blockchain/wallets/${E2E_WALLET}/accounts/"
+wallet_accounts_batch="blockchain/wallets/${E2E_WALLET}/accounts/batch"
+wallet_accounts_read_root="blockchain/wallets/${E2E_WALLET}/accounts"
 acct_base="blockchain/wallets/${E2E_WALLET}/accounts/0"
 single_base="blockchain/accounts/${E2E_ACCOUNT}"
 
@@ -94,9 +100,15 @@ vault_write_force_json() {
 echo "== import wallet ${E2E_WALLET} (deterministic mnemonic) =="
 vault write "blockchain/wallets/${E2E_WALLET}/import" mnemonic="${MNEMONIC}"
 
-echo "== derive account index 0 =="
-# Vault CLI requires -force when there are no key=value fields; wallet_id and index come from the path.
-vault write -force "${acct_base}"
+echo "== auto-derive first account (assigned index 0) =="
+# Create is on .../accounts/ (no index in path); Vault CLI needs -force when there are no k=v fields.
+DERIVE_JSON="$(vault_write_force_json "${wallet_accounts_root}")"
+IDX="$(require_jq "${DERIVE_JSON}" '.data.account_index // empty' 'expected .data.account_index from derive')"
+if [[ "${IDX}" != "0" ]]; then
+  echo "error: expected first account_index 0, got ${IDX}" >&2
+  echo "${DERIVE_JSON}" >&2
+  exit 1
+fi
 
 echo "== read derived account =="
 OUT="$(vault read -format=json "${acct_base}")"
@@ -116,6 +128,86 @@ vault list blockchain/wallets/
 
 echo "== list accounts for wallet =="
 vault list "blockchain/wallets/${E2E_WALLET}/accounts/" || echo "(no list entries; if you just rebuilt the plugin, run make setup-plugin-local to reload)"
+
+echo "== batch derive 3 accounts (indices 1,2,3 after index 0) =="
+BATCH_JSON="$(vault_write_json "${wallet_accounts_batch}" count=3)"
+BATCH_WID="$(require_jq "${BATCH_JSON}" '.data.wallet_id // empty' 'expected .data.wallet_id from batch derive')"
+if [[ "${BATCH_WID}" != "${E2E_WALLET}" ]]; then
+  echo "error: batch wallet_id mismatch: got ${BATCH_WID} want ${E2E_WALLET}" >&2
+  exit 1
+fi
+BATCH_LEN="$(echo "${BATCH_JSON}" | jq '.data.accounts | length')"
+if [[ "${BATCH_LEN}" != "3" ]]; then
+  echo "error: expected 3 accounts in batch response, got ${BATCH_LEN}" >&2
+  echo "${BATCH_JSON}" | jq . >&2
+  exit 1
+fi
+if ! echo "${BATCH_JSON}" | jq -e '
+  (.data.accounts | length == 3)
+  and (.data.accounts[0].account_index == "1")
+  and (.data.accounts[1].account_index == "2")
+  and (.data.accounts[2].account_index == "3")
+  and (.data.accounts[0].address != null)
+  and (.data.accounts[0].derivation_path != null)
+' >/dev/null; then
+  echo "error: batch accounts shape or indices mismatch" >&2
+  echo "${BATCH_JSON}" | jq . >&2
+  exit 1
+fi
+echo "  batch: 3 accounts (index 1..3)"
+
+echo "== list accounts after batch (expect keys 0..3) =="
+LIST_ACCTS_JSON="$(vault list -format=json "blockchain/wallets/${E2E_WALLET}/accounts/")"
+if ! echo "${LIST_ACCTS_JSON}" | jq -e '
+  (if type == "array" then . elif (has("data") and (.data | type == "object") and (.data | has("keys"))) then .data.keys else [] end)
+  | (sort == ["0","1","2","3"])
+' >/dev/null; then
+  echo "error: expected list keys [0,1,2,3] after batch" >&2
+  echo "${LIST_ACCTS_JSON}" | jq . >&2
+  exit 1
+fi
+echo "  list keys OK"
+
+echo "== range-read derived accounts (GET accounts start=2 end=3) =="
+META_JSON="$(vault read -format=json "${wallet_accounts_read_root}" start=2 end=3)"
+META_WID="$(require_jq "${META_JSON}" '.data.wallet_id // empty' 'expected .data.wallet_id from range read')"
+if [[ "${META_WID}" != "${E2E_WALLET}" ]]; then
+  echo "error: range-read wallet_id mismatch: got ${META_WID} want ${E2E_WALLET}" >&2
+  exit 1
+fi
+if ! echo "${META_JSON}" | jq -e '
+  (.data.accounts | length == 2)
+  and (.data.accounts[0].account_index == "2")
+  and (.data.accounts[1].account_index == "3")
+  and (.data.accounts[0].address != null)
+  and (.data.accounts[1].address != null)
+  and (.data.accounts[0].derivation_path != null)
+  and (.data.accounts[1].derivation_path != null)
+' >/dev/null; then
+  echo "error: range-read start=2 end=3 response mismatch" >&2
+  echo "${META_JSON}" | jq . >&2
+  exit 1
+fi
+echo "  range-read: 2 accounts (index 2..3)"
+echo "  index 2 address: $(echo "${META_JSON}" | jq -r '.data.accounts[0].address // empty')"
+echo "  index 3 address: $(echo "${META_JSON}" | jq -r '.data.accounts[1].address // empty')"
+
+echo "== batch derive reject count > 10000 (expect vault write failure) =="
+set +e
+BAD_OUT="$(vault write -format=json "${wallet_accounts_batch}" count=10001 2>&1)"
+BAD_RC=$?
+set -e
+if [[ "${BAD_RC}" -eq 0 ]]; then
+  echo "error: expected vault write to fail for count=10001" >&2
+  echo "${BAD_OUT}" >&2
+  exit 1
+fi
+if ! echo "${BAD_OUT}" | tr '[:upper:]' '[:lower:]' | grep -Fq '10000'; then
+  echo "error: expected error output to mention 10000 limit" >&2
+  echo "${BAD_OUT}" >&2
+  exit 1
+fi
+echo "  rejected as expected"
 
 echo "== sign (keccak + ecdsa) =="
 SIGN_JSON="$(vault_write_json "${acct_base}/sign" data="${PLAINTEXT_HEX}")"

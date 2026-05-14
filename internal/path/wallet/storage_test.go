@@ -129,6 +129,77 @@ func TestExistenceWalletSeed(t *testing.T) {
 	})
 }
 
+func TestExistenceWalletDerivedAccountsRoot(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	t.Run("empty_wallet_id_returns_false", func(t *testing.T) {
+		t.Parallel()
+		req := &logical.Request{Storage: new(logical.InmemStorage)}
+		exists, err := walletpkg.ExistenceWalletDerivedAccountsRoot()(ctx, req, walletStorageFieldData(map[string]interface{}{
+			"wallet_id": "",
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if exists {
+			t.Fatal("exists=true want false.")
+		}
+	})
+
+	t.Run("missing_seed_still_returns_false_exists", func(t *testing.T) {
+		t.Parallel()
+		req := &logical.Request{Storage: new(logical.InmemStorage)}
+		exists, err := walletpkg.ExistenceWalletDerivedAccountsRoot()(ctx, req, walletStorageFieldData(map[string]interface{}{
+			"wallet_id": "w_no_seed",
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if exists {
+			t.Fatal("exists=true want false.")
+		}
+	})
+
+	t.Run("seed_present_still_returns_false_exists", func(t *testing.T) {
+		t.Parallel()
+		s := new(logical.InmemStorage)
+		req := &logical.Request{Storage: s}
+		entry, err := logical.StorageEntryJSON(storagekey.SeedKey("w_root"), &model.WalletSeed{Mnemonic: testMnemonic})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Put(ctx, entry); err != nil {
+			t.Fatal(err)
+		}
+		exists, err := walletpkg.ExistenceWalletDerivedAccountsRoot()(ctx, req, walletStorageFieldData(map[string]interface{}{
+			"wallet_id": "w_root",
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if exists {
+			t.Fatal("exists=true want false (URL is not a singleton object).")
+		}
+	})
+
+	t.Run("storage_get_error_returns_error", func(t *testing.T) {
+		t.Parallel()
+		sentinel := errors.New("boom")
+		req := &logical.Request{Storage: &getErrorStorage{err: sentinel}}
+		_, err := walletpkg.ExistenceWalletDerivedAccountsRoot()(ctx, req, walletStorageFieldData(map[string]interface{}{
+			"wallet_id": "w_err",
+		}))
+		if err == nil {
+			t.Fatal("expected error.")
+		}
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("got %v want %v.", err, sentinel)
+		}
+	})
+}
+
 func TestExistenceWalletDerivedAccount(t *testing.T) {
 	t.Parallel()
 
@@ -383,4 +454,34 @@ func TestPrivateKeyECDSA_compatibleWithGoEthereumSign(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestReadWriteWalletCounter verifies counter defaults to 0 when absent and persists correctly.
+func TestReadWriteWalletCounter(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+
+	// Absent counter returns 0.
+	got, err := walletpkg.ReadWalletCounter(ctx, s, "wctr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 0 {
+		t.Fatalf("counter=%d want 0.", got)
+	}
+
+	// Write and read back.
+	if err := walletpkg.WriteWalletCounter(ctx, s, "wctr", 42); err != nil {
+		t.Fatal(err)
+	}
+	got, err = walletpkg.ReadWalletCounter(ctx, s, "wctr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 42 {
+		t.Fatalf("counter=%d want 42.", got)
+	}
+}
+
 

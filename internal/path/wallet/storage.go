@@ -58,6 +58,27 @@ func ExistenceWalletSeed() framework.ExistenceFunc {
 	}
 }
 
+// ExistenceWalletDerivedAccountsRoot satisfies the framework rule that any path registering
+// CreateOperation must define an ExistenceCheck. The URL wallets/:id/accounts/ is not a single
+// storage object (accounts live under .../accounts/<index>), so the bool is always false so
+// writes keep routing to Create (stable ACL vs tying "exists" to seed presence).
+//
+// It still mirrors ExistenceWalletSeed-style checks: require wallet_id, propagate storage Get
+// errors, and touch the seed key so a broken backend fails here instead of only inside the handler.
+func ExistenceWalletDerivedAccountsRoot() framework.ExistenceFunc {
+	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
+		walletID := model.NewFieldDataWrapper(data).GetString("wallet_id", "")
+		if walletID == "" {
+			return false, nil
+		}
+		_, err := req.Storage.Get(ctx, storagekey.SeedKey(walletID))
+		if err != nil {
+			return false, fmt.Errorf("wallet existence check for derived accounts root %s: %w", walletID, err)
+		}
+		return false, nil
+	}
+}
+
 // ExistenceWalletDerivedAccount returns true when storage has a derived account for wallet_id and index.
 func ExistenceWalletDerivedAccount() framework.ExistenceFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
@@ -88,6 +109,34 @@ func ReadWalletSeed(ctx context.Context, s logical.Storage, walletID string) (*m
 		return nil, fmt.Errorf("decode wallet seed %s: %w", walletID, err)
 	}
 	return &seed, nil
+}
+
+// ReadWalletCounter loads the auto-increment counter for walletID, returning 0 if not yet set.
+func ReadWalletCounter(ctx context.Context, s logical.Storage, walletID string) (uint32, error) {
+	entry, err := s.Get(ctx, storagekey.CounterKey(walletID))
+	if err != nil {
+		return 0, fmt.Errorf("get wallet counter %s: %w", walletID, err)
+	}
+	if entry == nil {
+		return 0, nil
+	}
+	var counter model.WalletCounter
+	if err := entry.DecodeJSON(&counter); err != nil {
+		return 0, fmt.Errorf("decode wallet counter %s: %w", walletID, err)
+	}
+	return counter.NextIndex, nil
+}
+
+// WriteWalletCounter persists the next auto-increment index for walletID.
+func WriteWalletCounter(ctx context.Context, s logical.Storage, walletID string, next uint32) error {
+	entry, err := logical.StorageEntryJSON(storagekey.CounterKey(walletID), &model.WalletCounter{NextIndex: next})
+	if err != nil {
+		return fmt.Errorf("encode wallet counter %s: %w", walletID, err)
+	}
+	if err := s.Put(ctx, entry); err != nil {
+		return fmt.Errorf("put wallet counter %s: %w", walletID, err)
+	}
+	return nil
 }
 
 // ParseAddressIndex parses a non-negative decimal index string within BIP-44 address_index bounds.

@@ -19,7 +19,9 @@ package wallet
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -42,6 +44,9 @@ func walletFieldData(raw map[string]interface{}) *framework.FieldData {
 	baseKeys := []string{
 		"wallet_id",
 		"index",
+		"start",
+		"end",
+		"count",
 		"data",
 		"to",
 		"address_to",
@@ -205,9 +210,9 @@ func TestHandleWalletSignEIP712_recoversAddress(t *testing.T) {
 
 	req := &logical.Request{Storage: s}
 	resp, err := handleWalletSignEIP712(ctx, req, walletFieldData(map[string]interface{}{
-		"wallet_id":    "w3",
-		"index":        "0",
-		"payload":      payload,
+		"wallet_id": "w3",
+		"index":     "0",
+		"payload":   payload,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -540,5 +545,512 @@ func TestHandleListWallets_sorted(t *testing.T) {
 	}
 	if len(keys) != 2 || keys[0] != "a" || keys[1] != "b" {
 		t.Fatalf("keys=%v want [a b].", keys)
+	}
+}
+
+// TestHandleDerivedAccountCreate_autoIncrement verifies successive creates assign index 0, 1.
+func TestHandleDerivedAccountCreate_autoIncrement(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wauto", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	var walletMu sync.Map
+	handler := makeHandleDerivedAccountCreate(&walletMu)
+
+	// First create → index 0.
+	resp, err := handler(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wauto",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp)
+	}
+	if got := resp.Data["account_index"]; got != "0" {
+		t.Fatalf("account_index=%v want 0.", got)
+	}
+
+	// Second create → index 1.
+	resp2, err := handler(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wauto",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp2 == nil || resp2.IsError() {
+		t.Fatalf("unexpected error response: %v", resp2)
+	}
+	if got := resp2.Data["account_index"]; got != "1" {
+		t.Fatalf("account_index=%v want 1.", got)
+	}
+}
+
+// TestHandleDerivedAccountCreate_missingWalletReturnsLogicalError verifies missing wallet returns an error response.
+func TestHandleDerivedAccountCreate_missingWalletReturnsLogicalError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	req := &logical.Request{Storage: s}
+
+	var walletMu sync.Map
+	handler := makeHandleDerivedAccountCreate(&walletMu)
+
+	resp, err := handler(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "nonexistent",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for missing wallet.")
+	}
+}
+
+// TestHandleBatchDerivedAccounts_success verifies three accounts are created with consecutive indices.
+func TestHandleBatchDerivedAccounts_success(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wbatch", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	var walletMu sync.Map
+	handler := makeHandleBatchDerivedAccountCreate(&walletMu)
+
+	resp, err := handler(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wbatch",
+		"count":     "3",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+	accts, ok := resp.Data["accounts"].([]interface{})
+	if !ok || len(accts) != 3 {
+		t.Fatalf("accounts=%T %v want 3 elements.", resp.Data["accounts"], resp.Data["accounts"])
+	}
+	for i, wantIdx := range []string{"0", "1", "2"} {
+		m, ok := accts[i].(map[string]interface{})
+		if !ok {
+			t.Fatalf("accounts[%d] type=%T.", i, accts[i])
+		}
+		if got := m["account_index"]; got != wantIdx {
+			t.Fatalf("accounts[%d].account_index=%v want %s.", i, got, wantIdx)
+		}
+		if m["address"] == "" || m["derivation_path"] == "" {
+			t.Fatalf("accounts[%d] missing address or path: %#v.", i, m)
+		}
+	}
+	next, err := ReadWalletCounter(ctx, s, "wbatch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next != 3 {
+		t.Fatalf("counter next=%d want 3.", next)
+	}
+}
+
+// TestHandleBatchDerivedAccounts_exceedsMax verifies count above max returns a logical error.
+func TestHandleBatchDerivedAccounts_exceedsMax(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wmaxb", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	var walletMu sync.Map
+	handler := makeHandleBatchDerivedAccountCreate(&walletMu)
+
+	resp, err := handler(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wmaxb",
+		"count":     "10001",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error for count > maxBatchDerivedAccounts.")
+	}
+}
+
+// TestHandleBatchDerivedAccounts_rejectsWhenWouldExceedBIP44Range verifies the batch is rejected
+// upfront (no partial accounts) when the counter is already at the last valid index.
+func TestHandleBatchDerivedAccounts_rejectsWhenWouldExceedBIP44Range(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wspan", testMnemonic)
+	if err := WriteWalletCounter(ctx, s, "wspan", model.MaxBIP44AddressIndex); err != nil {
+		t.Fatal(err)
+	}
+	req := &logical.Request{Storage: s}
+
+	var walletMu sync.Map
+	handler := makeHandleBatchDerivedAccountCreate(&walletMu)
+
+	resp, err := handler(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wspan",
+		"count":     "2",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error when batch would exceed BIP-44 max index.")
+	}
+	next, err := ReadWalletCounter(ctx, s, "wspan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next != model.MaxBIP44AddressIndex {
+		t.Fatalf("counter next=%d want unchanged %d.", next, model.MaxBIP44AddressIndex)
+	}
+}
+
+// TestHandleBatchDerivedAccounts_afterSingle verifies batch continues counter after a single create.
+func TestHandleBatchDerivedAccounts_afterSingle(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wmix", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	var walletMu sync.Map
+	single := makeHandleDerivedAccountCreate(&walletMu)
+	batch := makeHandleBatchDerivedAccountCreate(&walletMu)
+
+	resp1, err := single(ctx, req, walletFieldData(map[string]interface{}{"wallet_id": "wmix"}))
+	if err != nil || resp1 == nil || resp1.IsError() {
+		t.Fatalf("single create: %v %v", err, resp1)
+	}
+	if resp1.Data["account_index"] != "0" {
+		t.Fatalf("first index=%v want 0.", resp1.Data["account_index"])
+	}
+
+	resp2, err := batch(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wmix",
+		"count":     "2",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp2 == nil || resp2.IsError() {
+		t.Fatalf("batch: %v", resp2)
+	}
+	accts, _ := resp2.Data["accounts"].([]interface{})
+	if len(accts) != 2 {
+		t.Fatalf("len(accounts)=%d want 2.", len(accts))
+	}
+	if m0 := accts[0].(map[string]interface{}); m0["account_index"] != "1" {
+		t.Fatalf("batch[0] index=%v want 1.", m0["account_index"])
+	}
+	if m1 := accts[1].(map[string]interface{}); m1["account_index"] != "2" {
+		t.Fatalf("batch[1] index=%v want 2.", m1["account_index"])
+	}
+}
+
+// TestHandleListDerivedAccounts_noRange verifies all stored indices are returned when no range is given.
+func TestHandleListDerivedAccounts_noRange(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wlist", testMnemonic)
+	mustPutDerivedAccount(ctx, t, s, "wlist", "0", testMnemonic)
+	mustPutDerivedAccount(ctx, t, s, "wlist", "2", testMnemonic)
+	mustPutDerivedAccount(ctx, t, s, "wlist", "5", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	resp, err := handleListDerivedAccounts(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wlist",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, _ := resp.Data["keys"].([]string)
+	if len(keys) != 3 || keys[0] != "0" || keys[1] != "2" || keys[2] != "5" {
+		t.Fatalf("keys=%v want [0 2 5].", keys)
+	}
+}
+
+// TestHandleListDerivedAccounts_ignoresStartEnd verifies LIST returns all indices; start/end are not filters.
+func TestHandleListDerivedAccounts_ignoresStartEnd(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wrange", testMnemonic)
+	for _, idx := range []string{"0", "1", "2", "3", "4"} {
+		mustPutDerivedAccount(ctx, t, s, "wrange", idx, testMnemonic)
+	}
+	req := &logical.Request{Storage: s}
+
+	resp, err := handleListDerivedAccounts(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wrange",
+		"start":     "1",
+		"end":       "3",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, _ := resp.Data["keys"].([]string)
+	if len(keys) != 5 || keys[0] != "0" || keys[4] != "4" {
+		t.Fatalf("keys=%v want [0 1 2 3 4].", keys)
+	}
+}
+
+// TestHandleReadDerivedAccountsRange_success verifies inclusive range returns full metadata.
+func TestHandleReadDerivedAccountsRange_success(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wmeta", testMnemonic)
+	for _, idx := range []string{"0", "1", "2"} {
+		mustPutDerivedAccount(ctx, t, s, "wmeta", idx, testMnemonic)
+	}
+	req := &logical.Request{Storage: s}
+
+	resp, err := handleReadDerivedAccountsRange(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wmeta",
+		"start":     "1",
+		"end":       "2",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+	accts, _ := resp.Data["accounts"].([]interface{})
+	if len(accts) != 2 {
+		t.Fatalf("len(accounts)=%d want 2.", len(accts))
+	}
+}
+
+// TestHandleReadDerivedAccountsRange_missingIndex verifies a gap in the range returns an error.
+func TestHandleReadDerivedAccountsRange_missingIndex(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wgap", testMnemonic)
+	mustPutDerivedAccount(ctx, t, s, "wgap", "0", testMnemonic)
+	mustPutDerivedAccount(ctx, t, s, "wgap", "2", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	resp, err := handleReadDerivedAccountsRange(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wgap",
+		"start":     "0",
+		"end":       "2",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error when index 1 is missing.")
+	}
+}
+
+// TestHandleReadDerivedAccountsRange_spanExceedsMax verifies span > maxBulkReadDerivedSpan errors.
+func TestHandleReadDerivedAccountsRange_spanExceedsMax(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wspan2", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	resp, err := handleReadDerivedAccountsRange(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wspan2",
+		"start":     "0",
+		"end":       "10000",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error for span > maxBulkReadDerivedSpan.")
+	}
+}
+
+// TestHandleReadDerivedAccountsRange_startAfterEnd verifies start > end returns a logical error.
+func TestHandleReadDerivedAccountsRange_startAfterEnd(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "word", testMnemonic)
+	mustPutDerivedAccount(ctx, t, s, "word", "1", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	resp, err := handleReadDerivedAccountsRange(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "word",
+		"start":     "2",
+		"end":       "1",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error when start > end.")
+	}
+}
+
+// TestHandleReadDerivedAccountsRange_missingStart verifies omitting start returns a logical error.
+func TestHandleReadDerivedAccountsRange_missingStart(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wmissstart", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	resp, err := handleReadDerivedAccountsRange(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wmissstart",
+		"end":       "2",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error when start is missing.")
+	}
+}
+
+// TestHandleReadDerivedAccountsRange_missingEnd verifies omitting end returns a logical error.
+func TestHandleReadDerivedAccountsRange_missingEnd(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wmissend", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	resp, err := handleReadDerivedAccountsRange(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wmissend",
+		"start":     "0",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error when end is missing.")
+	}
+}
+
+// faultStorage wraps logical.InmemStorage and returns an error when Put is called with a
+// key matching faultKey. After faultRemaining reaches zero the fault is cleared and
+// subsequent Puts succeed normally.
+type faultStorage struct {
+	logical.Storage
+	faultKey       string
+	faultRemaining int
+}
+
+func (f *faultStorage) Put(ctx context.Context, entry *logical.StorageEntry) error {
+	if f.faultRemaining > 0 && entry.Key == f.faultKey {
+		f.faultRemaining--
+		return fmt.Errorf("injected Put failure for %q", entry.Key)
+	}
+	return f.Storage.Put(ctx, entry)
+}
+
+// TestHandleDerivedAccountCreate_partialWriteSelfHeals verifies that when WriteWalletCounter
+// fails after a successful Put(account), a retry derives the same address at the same index
+// and succeeds — confirming the deterministic BIP-44 derivation self-heals the partial write.
+func TestHandleDerivedAccountCreate_partialWriteSelfHeals(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	inner := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, inner, "wpartial", testMnemonic)
+
+	// Fail the first WriteWalletCounter (counter key Put) only.
+	fs := &faultStorage{
+		Storage:        inner,
+		faultKey:       storagekey.CounterKey("wpartial"),
+		faultRemaining: 1,
+	}
+	req := &logical.Request{Storage: fs}
+
+	var walletMu sync.Map
+	handler := makeHandleDerivedAccountCreate(&walletMu)
+
+	// First attempt: account is written but counter Put fails → handler returns error.
+	_, err := handler(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wpartial",
+	}))
+	if err == nil {
+		t.Fatal("expected error from injected counter Put failure.")
+	}
+
+	// Retry: fault is cleared; counter still reads 0 so same index is re-derived.
+	resp, err := handler(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wpartial",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error on retry: %v", resp)
+	}
+	// Index must still be 0 — same account, no gap introduced.
+	if got := resp.Data["account_index"]; got != "0" {
+		t.Fatalf("account_index=%v want 0 after self-heal.", got)
+	}
+
+	// Subsequent create must advance to index 1.
+	resp2, err := handler(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wpartial",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp2.Data["account_index"]; got != "1" {
+		t.Fatalf("account_index=%v want 1 after self-heal.", got)
+	}
+}
+
+// TestHandleDerivedAccountCreate_updateOperationCreatesAccount verifies that UpdateOperation
+// routes to the same handler as CreateOperation and produces a valid account.
+func TestHandleDerivedAccountCreate_updateOperationCreatesAccount(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wupdate", testMnemonic)
+
+	// UpdateOperation uses the same handler; simulate it by calling the handler directly.
+	req := &logical.Request{Storage: s, Operation: logical.UpdateOperation}
+
+	var walletMu sync.Map
+	handler := makeHandleDerivedAccountCreate(&walletMu)
+
+	resp, err := handler(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wupdate",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("UpdateOperation: unexpected error response: %v", resp)
+	}
+	if got := resp.Data["account_index"]; got != "0" {
+		t.Fatalf("account_index=%v want 0.", got)
+	}
+	if resp.Data["address"] == "" {
+		t.Fatal("expected non-empty address.")
 	}
 }
