@@ -660,6 +660,48 @@ func TestHandleListDerivedAccounts_rangeFilter(t *testing.T) {
 	}
 }
 
+// TestHandleListDerivedAccounts_startExceedsMax verifies start > MaxBIP44AddressIndex returns an error.
+func TestHandleListDerivedAccounts_startExceedsMax(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wmax", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	resp, err := handleListDerivedAccounts(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wmax",
+		"start":     "2147483648",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for start > MaxBIP44AddressIndex.")
+	}
+}
+
+// TestHandleListDerivedAccounts_endExceedsMax verifies end > MaxBIP44AddressIndex returns an error.
+func TestHandleListDerivedAccounts_endExceedsMax(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wmaxend", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	resp, err := handleListDerivedAccounts(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wmaxend",
+		"end":       "2147483648",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for end > MaxBIP44AddressIndex.")
+	}
+}
+
 // faultStorage wraps logical.InmemStorage and returns an error when Put is called with a
 // key matching faultKey. After faultRemaining reaches zero the fault is cleared and
 // subsequent Puts succeed normally.

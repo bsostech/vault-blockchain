@@ -283,11 +283,17 @@ func handleListDerivedAccounts(ctx context.Context, req *logical.Request, data *
 		if err != nil || startVal < 0 {
 			return logical.ErrorResponse("start must be a non-negative integer"), nil
 		}
+		if uint64(startVal) > uint64(model.MaxBIP44AddressIndex) {
+			return logical.ErrorResponse("start must be <= 2147483647"), nil
+		}
 	}
 	if hasEnd {
 		endVal, err = strconv.Atoi(endStr)
 		if err != nil || endVal < 0 {
 			return logical.ErrorResponse("end must be a non-negative integer"), nil
+		}
+		if uint64(endVal) > uint64(model.MaxBIP44AddressIndex) {
+			return logical.ErrorResponse("end must be <= 2147483647"), nil
 		}
 	}
 	if hasStart && hasEnd && startVal > endVal {
