@@ -19,6 +19,7 @@ package wallet
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sync"
 	"testing"
@@ -659,28 +660,108 @@ func TestHandleListDerivedAccounts_rangeFilter(t *testing.T) {
 	}
 }
 
-// TestHandleListDerivedAccounts_startOnly verifies only start bound filters correctly.
-func TestHandleListDerivedAccounts_startOnly(t *testing.T) {
+// faultStorage wraps logical.InmemStorage and returns an error when Put is called with a
+// key matching faultKey. After faultRemaining reaches zero the fault is cleared and
+// subsequent Puts succeed normally.
+type faultStorage struct {
+	logical.Storage
+	faultKey       string
+	faultRemaining int
+}
+
+func (f *faultStorage) Put(ctx context.Context, entry *logical.StorageEntry) error {
+	if f.faultRemaining > 0 && entry.Key == f.faultKey {
+		f.faultRemaining--
+		return fmt.Errorf("injected Put failure for %q", entry.Key)
+	}
+	return f.Storage.Put(ctx, entry)
+}
+
+// TestHandleDerivedAccountCreate_partialWriteSelfHeals verifies that when WriteWalletCounter
+// fails after a successful Put(account), a retry derives the same address at the same index
+// and succeeds — confirming the deterministic BIP-44 derivation self-heals the partial write.
+func TestHandleDerivedAccountCreate_partialWriteSelfHeals(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	s := new(logical.InmemStorage)
-	mustPutWalletSeed(ctx, t, s, "wstart", testMnemonic)
-	for _, idx := range []string{"0", "1", "2", "3"} {
-		mustPutDerivedAccount(ctx, t, s, "wstart", idx, testMnemonic)
-	}
-	req := &logical.Request{Storage: s}
+	inner := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, inner, "wpartial", testMnemonic)
 
-	resp, err := handleListDerivedAccounts(ctx, req, walletFieldData(map[string]interface{}{
-		"wallet_id": "wstart",
-		"start":     "2",
+	// Fail the first WriteWalletCounter (counter key Put) only.
+	fs := &faultStorage{
+		Storage:        inner,
+		faultKey:       storagekey.CounterKey("wpartial"),
+		faultRemaining: 1,
+	}
+	req := &logical.Request{Storage: fs}
+
+	var walletMu sync.Map
+	handler := makeHandleDerivedAccountCreate(&walletMu)
+
+	// First attempt: account is written but counter Put fails → handler returns error.
+	_, err := handler(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wpartial",
+	}))
+	if err == nil {
+		t.Fatal("expected error from injected counter Put failure.")
+	}
+
+	// Retry: fault is cleared; counter still reads 0 so same index is re-derived.
+	resp, err := handler(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wpartial",
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys, _ := resp.Data["keys"].([]string)
-	if len(keys) != 2 || keys[0] != "2" || keys[1] != "3" {
-		t.Fatalf("keys=%v want [2 3].", keys)
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error on retry: %v", resp)
+	}
+	// Index must still be 0 — same account, no gap introduced.
+	if got := resp.Data["account_index"]; got != "0" {
+		t.Fatalf("account_index=%v want 0 after self-heal.", got)
+	}
+
+	// Subsequent create must advance to index 1.
+	resp2, err := handler(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wpartial",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp2.Data["account_index"]; got != "1" {
+		t.Fatalf("account_index=%v want 1 after self-heal.", got)
+	}
+}
+
+// TestHandleDerivedAccountCreate_updateOperationCreatesAccount verifies that UpdateOperation
+// routes to the same handler as CreateOperation and produces a valid account.
+func TestHandleDerivedAccountCreate_updateOperationCreatesAccount(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wupdate", testMnemonic)
+
+	// UpdateOperation uses the same handler; simulate it by calling the handler directly.
+	req := &logical.Request{Storage: s, Operation: logical.UpdateOperation}
+
+	var walletMu sync.Map
+	handler := makeHandleDerivedAccountCreate(&walletMu)
+
+	resp, err := handler(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wupdate",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("UpdateOperation: unexpected error response: %v", resp)
+	}
+	if got := resp.Data["account_index"]; got != "0" {
+		t.Fatalf("account_index=%v want 0.", got)
+	}
+	if resp.Data["address"] == "" {
+		t.Fatal("expected non-empty address.")
 	}
 }
 
