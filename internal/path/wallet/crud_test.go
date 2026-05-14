@@ -46,6 +46,7 @@ func walletFieldData(raw map[string]interface{}) *framework.FieldData {
 		"index",
 		"start",
 		"end",
+		"count",
 		"data",
 		"to",
 		"address_to",
@@ -607,6 +608,155 @@ func TestHandleDerivedAccountCreate_missingWalletReturnsLogicalError(t *testing.
 	}
 	if resp == nil || !resp.IsError() {
 		t.Fatal("expected error response for missing wallet.")
+	}
+}
+
+// TestHandleBatchDerivedAccounts_success verifies three accounts are created with consecutive indices.
+func TestHandleBatchDerivedAccounts_success(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wbatch", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	var walletMu sync.Map
+	handler := makeHandleBatchDerivedAccountCreate(&walletMu)
+
+	resp, err := handler(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wbatch",
+		"count":     "3",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+	accts, ok := resp.Data["accounts"].([]interface{})
+	if !ok || len(accts) != 3 {
+		t.Fatalf("accounts=%T %v want 3 elements.", resp.Data["accounts"], resp.Data["accounts"])
+	}
+	for i, wantIdx := range []string{"0", "1", "2"} {
+		m, ok := accts[i].(map[string]interface{})
+		if !ok {
+			t.Fatalf("accounts[%d] type=%T.", i, accts[i])
+		}
+		if got := m["account_index"]; got != wantIdx {
+			t.Fatalf("accounts[%d].account_index=%v want %s.", i, got, wantIdx)
+		}
+		if m["address"] == "" || m["derivation_path"] == "" {
+			t.Fatalf("accounts[%d] missing address or path: %#v.", i, m)
+		}
+	}
+	next, err := ReadWalletCounter(ctx, s, "wbatch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next != 3 {
+		t.Fatalf("counter next=%d want 3.", next)
+	}
+}
+
+// TestHandleBatchDerivedAccounts_exceedsMax verifies count above max returns a logical error.
+func TestHandleBatchDerivedAccounts_exceedsMax(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wmaxb", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	var walletMu sync.Map
+	handler := makeHandleBatchDerivedAccountCreate(&walletMu)
+
+	resp, err := handler(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wmaxb",
+		"count":     "10001",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error for count > maxBatchDerivedAccounts.")
+	}
+}
+
+// TestHandleBatchDerivedAccounts_rejectsWhenWouldExceedBIP44Range verifies the batch is rejected
+// upfront (no partial accounts) when the counter is already at the last valid index.
+func TestHandleBatchDerivedAccounts_rejectsWhenWouldExceedBIP44Range(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wspan", testMnemonic)
+	if err := WriteWalletCounter(ctx, s, "wspan", model.MaxBIP44AddressIndex); err != nil {
+		t.Fatal(err)
+	}
+	req := &logical.Request{Storage: s}
+
+	var walletMu sync.Map
+	handler := makeHandleBatchDerivedAccountCreate(&walletMu)
+
+	resp, err := handler(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wspan",
+		"count":     "2",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error when batch would exceed BIP-44 max index.")
+	}
+	next, err := ReadWalletCounter(ctx, s, "wspan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next != model.MaxBIP44AddressIndex {
+		t.Fatalf("counter next=%d want unchanged %d.", next, model.MaxBIP44AddressIndex)
+	}
+}
+
+// TestHandleBatchDerivedAccounts_afterSingle verifies batch continues counter after a single create.
+func TestHandleBatchDerivedAccounts_afterSingle(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wmix", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	var walletMu sync.Map
+	single := makeHandleDerivedAccountCreate(&walletMu)
+	batch := makeHandleBatchDerivedAccountCreate(&walletMu)
+
+	resp1, err := single(ctx, req, walletFieldData(map[string]interface{}{"wallet_id": "wmix"}))
+	if err != nil || resp1 == nil || resp1.IsError() {
+		t.Fatalf("single create: %v %v", err, resp1)
+	}
+	if resp1.Data["account_index"] != "0" {
+		t.Fatalf("first index=%v want 0.", resp1.Data["account_index"])
+	}
+
+	resp2, err := batch(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wmix",
+		"count":     "2",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp2 == nil || resp2.IsError() {
+		t.Fatalf("batch: %v", resp2)
+	}
+	accts, _ := resp2.Data["accounts"].([]interface{})
+	if len(accts) != 2 {
+		t.Fatalf("len(accounts)=%d want 2.", len(accts))
+	}
+	if m0 := accts[0].(map[string]interface{}); m0["account_index"] != "1" {
+		t.Fatalf("batch[0] index=%v want 1.", m0["account_index"])
+	}
+	if m1 := accts[1].(map[string]interface{}); m1["account_index"] != "2" {
+		t.Fatalf("batch[1] index=%v want 2.", m1["account_index"])
 	}
 }
 

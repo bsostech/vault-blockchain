@@ -29,6 +29,7 @@ func Paths(walletMu *sync.Map) []*framework.Path {
 		pathWalletCreateAuto(),
 		pathWalletImport(),
 		pathDerivedAccount(),
+		pathBatchDerivedAccounts(walletMu),
 		pathListDerivedAccounts(walletMu),
 		pathWalletSignTxLegacy(),
 		pathWalletSignTxEIP1559(),
@@ -126,6 +127,29 @@ func pathDerivedAccount() *framework.Path {
 		ExistenceCheck: ExistenceWalletDerivedAccount(),
 		Callbacks: map[logical.Operation]framework.OperationFunc{
 			logical.ReadOperation: handleDerivedAccountRead,
+		},
+	}
+}
+
+// pathBatchDerivedAccounts registers POST on wallets/:wallet_id/accounts/batch to create
+// multiple derived accounts in one request (bounded by maxBatchDerivedAccounts in crud.go).
+func pathBatchDerivedAccounts(walletMu *sync.Map) *framework.Path {
+	walletID := framework.GenericNameRegex("wallet_id")
+	return &framework.Path{
+		Pattern:      "wallets/" + walletID + "/accounts/batch",
+		HelpSynopsis: "Create multiple derived Ethereum accounts at consecutive counter indices.",
+		Fields: map[string]*framework.FieldSchema{
+			"wallet_id": {Type: framework.TypeString},
+			"count": {
+				Type:        framework.TypeString,
+				Required:    true,
+				Description: "Number of accounts to create (positive integer, max 10000).",
+			},
+		},
+		ExistenceCheck: ExistenceWalletDerivedAccountsRoot(),
+		Callbacks: map[logical.Operation]framework.OperationFunc{
+			logical.CreateOperation: makeHandleBatchDerivedAccountCreate(walletMu),
+			logical.UpdateOperation: makeHandleBatchDerivedAccountCreate(walletMu),
 		},
 	}
 }

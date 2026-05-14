@@ -94,3 +94,28 @@ func TestPaths_registerUpdateOnWriteEndpoints(t *testing.T) {
 		}
 	}
 }
+
+// TestPaths_batchDerivedAccounts_registersCreateUpdate verifies batch path wires Create and Update.
+func TestPaths_batchDerivedAccounts_registersCreateUpdate(t *testing.T) {
+	t.Parallel()
+
+	var walletMu sync.Map
+	paths := Paths(&walletMu)
+	var batchPattern string
+	for _, p := range paths {
+		if p == nil {
+			continue
+		}
+		if strings.HasSuffix(p.Pattern, "/accounts/batch") {
+			batchPattern = p.Pattern
+			ops := pathRegisteredOps(p)
+			if !ops[logical.CreateOperation] || !ops[logical.UpdateOperation] {
+				t.Fatalf("pattern %q ops=%v want Create+Update.", p.Pattern, ops)
+			}
+			break
+		}
+	}
+	if batchPattern == "" {
+		t.Fatal("missing wallets/*/accounts/batch path.")
+	}
+}

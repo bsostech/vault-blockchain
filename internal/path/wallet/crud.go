@@ -38,6 +38,12 @@ import (
 // errWalletAlreadyExists indicates a seed is already stored for wallet_id.
 var errWalletAlreadyExists = errors.New("wallet_id already exists")
 
+// errAccountIndexLimitReached indicates the next derived index would exceed BIP-44 bounds.
+var errAccountIndexLimitReached = errors.New("account index limit reached")
+
+// maxBatchDerivedAccounts caps how many derived accounts one batch request may create.
+const maxBatchDerivedAccounts = 10000
+
 // putWalletSeedIfAbsent writes the BIP-39 seed JSON under wallets/<id>/seed if absent.
 func putWalletSeedIfAbsent(
 	ctx context.Context,
@@ -164,6 +170,40 @@ func handleListWallets(ctx context.Context, req *logical.Request, _ *framework.F
 	return logical.ListResponse(ids), nil
 }
 
+// createNextDerivedAccount allocates the current counter index, persists derived metadata, and advances the counter.
+// Caller must hold the per-wallet mutex from walletMu and ensure the wallet seed exists.
+func createNextDerivedAccount(ctx context.Context, req *logical.Request, walletID, mnemonic string) (indexStr, address, derivationPath string, err error) {
+	nextIndex, err := ReadWalletCounter(ctx, req.Storage, walletID)
+	if err != nil {
+		return "", "", "", err
+	}
+	if err := model.ValidateAddressIndex(uint64(nextIndex)); err != nil {
+		return "", "", "", errAccountIndexLimitReached
+	}
+
+	address, derivationPath, err = model.DeriveEthereumAccount(mnemonic, nextIndex)
+	if err != nil {
+		return "", "", "", fmt.Errorf("derive account %s/%d: %w", walletID, nextIndex, err)
+	}
+
+	indexStr = fmt.Sprintf("%d", nextIndex)
+	derived := &model.DerivedAccount{
+		Address:        address,
+		DerivationPath: derivationPath,
+	}
+	entry, err := logical.StorageEntryJSON(storagekey.AccountKey(walletID, indexStr), derived)
+	if err != nil {
+		return "", "", "", fmt.Errorf("encode derived account %s/%s: %w", walletID, indexStr, err)
+	}
+	if err := req.Storage.Put(ctx, entry); err != nil {
+		return "", "", "", fmt.Errorf("put derived account %s/%s: %w", walletID, indexStr, err)
+	}
+	if err := WriteWalletCounter(ctx, req.Storage, walletID, nextIndex+1); err != nil {
+		return "", "", "", err
+	}
+	return indexStr, address, derivationPath, nil
+}
+
 // makeHandleDerivedAccountCreate returns a handler that derives m/44'/60'/0'/0/<counter> and
 // persists address metadata for the wallet. The index is assigned automatically using a
 // per-wallet counter. walletMu serialises the counter read-increment-write sequence so that
@@ -187,32 +227,11 @@ func makeHandleDerivedAccountCreate(walletMu *sync.Map) framework.OperationFunc 
 			return logical.ErrorResponse("wallet not found"), nil
 		}
 
-		nextIndex, err := ReadWalletCounter(ctx, req.Storage, walletID)
+		indexStr, address, derivationPath, err := createNextDerivedAccount(ctx, req, walletID, seed.Mnemonic)
 		if err != nil {
-			return nil, err
-		}
-		if err := model.ValidateAddressIndex(uint64(nextIndex)); err != nil {
-			return logical.ErrorResponse("account index limit reached (max 2147483647)"), nil
-		}
-
-		address, derivationPath, err := model.DeriveEthereumAccount(seed.Mnemonic, nextIndex)
-		if err != nil {
-			return nil, fmt.Errorf("derive account %s/%d: %w", walletID, nextIndex, err)
-		}
-
-		indexStr := fmt.Sprintf("%d", nextIndex)
-		derived := &model.DerivedAccount{
-			Address:        address,
-			DerivationPath: derivationPath,
-		}
-		entry, err := logical.StorageEntryJSON(storagekey.AccountKey(walletID, indexStr), derived)
-		if err != nil {
-			return nil, fmt.Errorf("encode derived account %s/%s: %w", walletID, indexStr, err)
-		}
-		if err := req.Storage.Put(ctx, entry); err != nil {
-			return nil, fmt.Errorf("put derived account %s/%s: %w", walletID, indexStr, err)
-		}
-		if err := WriteWalletCounter(ctx, req.Storage, walletID, nextIndex+1); err != nil {
+			if errors.Is(err, errAccountIndexLimitReached) {
+				return logical.ErrorResponse("account index limit reached (max 2147483647)"), nil
+			}
 			return nil, err
 		}
 
@@ -221,6 +240,74 @@ func makeHandleDerivedAccountCreate(walletMu *sync.Map) framework.OperationFunc 
 				"address":         address,
 				"account_index":   indexStr,
 				"derivation_path": derivationPath,
+			},
+		}, nil
+	}
+}
+
+// makeHandleBatchDerivedAccountCreate returns a handler that creates up to maxBatchDerivedAccounts
+// derived accounts in one request, holding the same per-wallet mutex for the whole loop.
+func makeHandleBatchDerivedAccountCreate(walletMu *sync.Map) framework.OperationFunc {
+	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+		wrapper := model.NewFieldDataWrapper(data)
+		walletID, err := wrapper.MustGetString("wallet_id")
+		if err != nil || walletID == "" {
+			return logical.ErrorResponse("wallet_id is required"), nil
+		}
+		countStr, err := wrapper.MustGetString("count")
+		if err != nil || countStr == "" {
+			return logical.ErrorResponse("count is required"), nil
+		}
+		count, err := strconv.Atoi(countStr)
+		if err != nil || count < 1 {
+			return logical.ErrorResponse("count must be a positive integer"), nil
+		}
+		if count > maxBatchDerivedAccounts {
+			return logical.ErrorResponse("count must be <= %d", maxBatchDerivedAccounts), nil
+		}
+
+		mu, _ := walletMu.LoadOrStore(walletID, &sync.Mutex{})
+		mu.(*sync.Mutex).Lock()
+		defer mu.(*sync.Mutex).Unlock()
+
+		seed, err := ReadWalletSeed(ctx, req.Storage, walletID)
+		if err != nil {
+			return nil, err
+		}
+		if seed == nil || seed.Mnemonic == "" {
+			return logical.ErrorResponse("wallet not found"), nil
+		}
+
+		nextStart, err := ReadWalletCounter(ctx, req.Storage, walletID)
+		if err != nil {
+			return nil, err
+		}
+		// Reject the whole batch if any index would exceed BIP-44 address_index max (avoids partial creates).
+		lastIndex := uint64(nextStart) + uint64(count) - 1
+		if lastIndex > uint64(model.MaxBIP44AddressIndex) {
+			return logical.ErrorResponse("account index limit reached (max 2147483647)"), nil
+		}
+
+		accounts := make([]interface{}, 0, count)
+		for i := 0; i < count; i++ {
+			indexStr, address, derivationPath, err := createNextDerivedAccount(ctx, req, walletID, seed.Mnemonic)
+			if err != nil {
+				if errors.Is(err, errAccountIndexLimitReached) {
+					return logical.ErrorResponse("account index limit reached (max 2147483647)"), nil
+				}
+				return nil, err
+			}
+			accounts = append(accounts, map[string]interface{}{
+				"account_index":   indexStr,
+				"address":         address,
+				"derivation_path": derivationPath,
+			})
+		}
+
+		return &logical.Response{
+			Data: map[string]interface{}{
+				"wallet_id": walletID,
+				"accounts":  accounts,
 			},
 		}, nil
 	}
