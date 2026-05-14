@@ -20,6 +20,7 @@ package wallet
 import (
 	"context"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -554,8 +555,11 @@ func TestHandleDerivedAccountCreate_autoIncrement(t *testing.T) {
 	mustPutWalletSeed(ctx, t, s, "wauto", testMnemonic)
 	req := &logical.Request{Storage: s}
 
+	var walletMu sync.Map
+	handler := makeHandleDerivedAccountCreate(&walletMu)
+
 	// First create → index 0.
-	resp, err := handleDerivedAccountCreate(ctx, req, walletFieldData(map[string]interface{}{
+	resp, err := handler(ctx, req, walletFieldData(map[string]interface{}{
 		"wallet_id": "wauto",
 	}))
 	if err != nil {
@@ -569,7 +573,7 @@ func TestHandleDerivedAccountCreate_autoIncrement(t *testing.T) {
 	}
 
 	// Second create → index 1.
-	resp2, err := handleDerivedAccountCreate(ctx, req, walletFieldData(map[string]interface{}{
+	resp2, err := handler(ctx, req, walletFieldData(map[string]interface{}{
 		"wallet_id": "wauto",
 	}))
 	if err != nil {
@@ -591,7 +595,10 @@ func TestHandleDerivedAccountCreate_missingWalletReturnsLogicalError(t *testing.
 	s := new(logical.InmemStorage)
 	req := &logical.Request{Storage: s}
 
-	resp, err := handleDerivedAccountCreate(ctx, req, walletFieldData(map[string]interface{}{
+	var walletMu sync.Map
+	handler := makeHandleDerivedAccountCreate(&walletMu)
+
+	resp, err := handler(ctx, req, walletFieldData(map[string]interface{}{
 		"wallet_id": "nonexistent",
 	}))
 	if err != nil {

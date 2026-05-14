@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -22,13 +23,13 @@ import (
 )
 
 // Paths returns all wallet (HD) paths.
-func Paths() []*framework.Path {
+func Paths(walletMu *sync.Map) []*framework.Path {
 	return []*framework.Path{
 		pathListWallets(),
 		pathWalletCreateAuto(),
 		pathWalletImport(),
 		pathDerivedAccount(),
-		pathListDerivedAccounts(),
+		pathListDerivedAccounts(walletMu),
 		pathWalletSignTxLegacy(),
 		pathWalletSignTxEIP1559(),
 		pathWalletSign(),
@@ -131,8 +132,9 @@ func pathDerivedAccount() *framework.Path {
 
 // pathListDerivedAccounts registers LIST and auto-create on wallets/:wallet_id/accounts/.
 // LIST accepts optional start and end query parameters to filter indices (inclusive range).
-// POST derives and stores the next account using the auto-increment counter.
-func pathListDerivedAccounts() *framework.Path {
+// POST derives and stores the next account using the auto-increment counter; walletMu ensures
+// the counter read-increment-write sequence is atomic within a single Vault active node.
+func pathListDerivedAccounts(walletMu *sync.Map) *framework.Path {
 	walletID := framework.GenericNameRegex("wallet_id")
 	return &framework.Path{
 		Pattern:      "wallets/" + walletID + "/accounts/?",
@@ -151,8 +153,8 @@ func pathListDerivedAccounts() *framework.Path {
 		ExistenceCheck: ExistenceWalletDerivedAccountsRoot(),
 		Callbacks: map[logical.Operation]framework.OperationFunc{
 			logical.ListOperation:   handleListDerivedAccounts,
-			logical.CreateOperation: handleDerivedAccountCreate,
-			logical.UpdateOperation: handleDerivedAccountCreate,
+			logical.CreateOperation: makeHandleDerivedAccountCreate(walletMu),
+			logical.UpdateOperation: makeHandleDerivedAccountCreate(walletMu),
 		},
 	}
 }

@@ -25,6 +25,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -163,58 +164,66 @@ func handleListWallets(ctx context.Context, req *logical.Request, _ *framework.F
 	return logical.ListResponse(ids), nil
 }
 
-// handleDerivedAccountCreate derives m/44'/60'/0'/0/<counter> and persists address metadata for the wallet.
-// The index is assigned automatically using a per-wallet counter; callers do not specify it.
-func handleDerivedAccountCreate(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-	walletID, err := model.NewFieldDataWrapper(data).MustGetString("wallet_id")
-	if err != nil || walletID == "" {
-		return logical.ErrorResponse("wallet_id is required"), nil
-	}
+// makeHandleDerivedAccountCreate returns a handler that derives m/44'/60'/0'/0/<counter> and
+// persists address metadata for the wallet. The index is assigned automatically using a
+// per-wallet counter. walletMu serialises the counter read-increment-write sequence so that
+// concurrent requests to the same wallet_id cannot derive the same address.
+func makeHandleDerivedAccountCreate(walletMu *sync.Map) framework.OperationFunc {
+	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+		walletID, err := model.NewFieldDataWrapper(data).MustGetString("wallet_id")
+		if err != nil || walletID == "" {
+			return logical.ErrorResponse("wallet_id is required"), nil
+		}
 
-	seed, err := ReadWalletSeed(ctx, req.Storage, walletID)
-	if err != nil {
-		return nil, err
-	}
-	if seed == nil || seed.Mnemonic == "" {
-		return logical.ErrorResponse("wallet not found"), nil
-	}
+		mu, _ := walletMu.LoadOrStore(walletID, &sync.Mutex{})
+		mu.(*sync.Mutex).Lock()
+		defer mu.(*sync.Mutex).Unlock()
 
-	nextIndex, err := ReadWalletCounter(ctx, req.Storage, walletID)
-	if err != nil {
-		return nil, err
-	}
-	if err := model.ValidateAddressIndex(uint64(nextIndex)); err != nil {
-		return logical.ErrorResponse("account index limit reached (max 2147483647)"), nil
-	}
+		seed, err := ReadWalletSeed(ctx, req.Storage, walletID)
+		if err != nil {
+			return nil, err
+		}
+		if seed == nil || seed.Mnemonic == "" {
+			return logical.ErrorResponse("wallet not found"), nil
+		}
 
-	address, derivationPath, err := model.DeriveEthereumAccount(seed.Mnemonic, nextIndex)
-	if err != nil {
-		return nil, fmt.Errorf("derive account %s/%d: %w", walletID, nextIndex, err)
-	}
+		nextIndex, err := ReadWalletCounter(ctx, req.Storage, walletID)
+		if err != nil {
+			return nil, err
+		}
+		if err := model.ValidateAddressIndex(uint64(nextIndex)); err != nil {
+			return logical.ErrorResponse("account index limit reached (max 2147483647)"), nil
+		}
 
-	indexStr := fmt.Sprintf("%d", nextIndex)
-	derived := &model.DerivedAccount{
-		Address:        address,
-		DerivationPath: derivationPath,
-	}
-	entry, err := logical.StorageEntryJSON(storagekey.AccountKey(walletID, indexStr), derived)
-	if err != nil {
-		return nil, fmt.Errorf("encode derived account %s/%s: %w", walletID, indexStr, err)
-	}
-	if err := req.Storage.Put(ctx, entry); err != nil {
-		return nil, fmt.Errorf("put derived account %s/%s: %w", walletID, indexStr, err)
-	}
-	if err := WriteWalletCounter(ctx, req.Storage, walletID, nextIndex+1); err != nil {
-		return nil, err
-	}
+		address, derivationPath, err := model.DeriveEthereumAccount(seed.Mnemonic, nextIndex)
+		if err != nil {
+			return nil, fmt.Errorf("derive account %s/%d: %w", walletID, nextIndex, err)
+		}
 
-	return &logical.Response{
-		Data: map[string]interface{}{
-			"address":         address,
-			"account_index":   indexStr,
-			"derivation_path": derivationPath,
-		},
-	}, nil
+		indexStr := fmt.Sprintf("%d", nextIndex)
+		derived := &model.DerivedAccount{
+			Address:        address,
+			DerivationPath: derivationPath,
+		}
+		entry, err := logical.StorageEntryJSON(storagekey.AccountKey(walletID, indexStr), derived)
+		if err != nil {
+			return nil, fmt.Errorf("encode derived account %s/%s: %w", walletID, indexStr, err)
+		}
+		if err := req.Storage.Put(ctx, entry); err != nil {
+			return nil, fmt.Errorf("put derived account %s/%s: %w", walletID, indexStr, err)
+		}
+		if err := WriteWalletCounter(ctx, req.Storage, walletID, nextIndex+1); err != nil {
+			return nil, err
+		}
+
+		return &logical.Response{
+			Data: map[string]interface{}{
+				"address":         address,
+				"account_index":   indexStr,
+				"derivation_path": derivationPath,
+			},
+		}, nil
+	}
 }
 
 // handleDerivedAccountRead returns stored address and derivation path for wallet_id and index.

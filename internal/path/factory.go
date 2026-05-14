@@ -18,6 +18,8 @@
 package path
 
 import (
+	"sync"
+
 	"github.com/hashicorp/vault/sdk/framework"
 
 	"github.com/bsostech/vault-blockchain/internal/path/account"
@@ -25,9 +27,9 @@ import (
 )
 
 // GetPaths returns all framework paths.
-func GetPaths() []*framework.Path {
+func GetPaths(walletMu *sync.Map) []*framework.Path {
 	acctPaths := account.Paths()
-	walletPaths := wallet.Paths()
+	walletPaths := wallet.Paths(walletMu)
 	out := make([]*framework.Path, 0, len(acctPaths)+len(walletPaths))
 	out = append(out, acctPaths...)
 	out = append(out, walletPaths...)

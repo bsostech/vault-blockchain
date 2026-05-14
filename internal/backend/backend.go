@@ -18,6 +18,8 @@
 package backend
 
 import (
+	"sync"
+
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 
@@ -28,16 +30,19 @@ import (
 // ethereumBackend is the Vault logical backend for Ethereum wallet and single-key operations.
 type ethereumBackend struct {
 	*framework.Backend
+	// walletMu provides per-wallet mutex locks for operations that require atomicity
+	// within a single Vault active node (counter read-increment-write).
+	walletMu sync.Map
 }
 
-// newBackend constructs the backend with paths, seal-wrap prefixes, and mutexes for handlers.
+// newBackend constructs the backend with paths and seal-wrap prefixes.
 func newBackend(conf *logical.BackendConfig) (*ethereumBackend, error) {
 	var b ethereumBackend
 	b.Backend = &framework.Backend{
 		Help:           "",
 		RunningVersion: "v" + version.Version,
 		Paths: framework.PathAppend(
-			path.GetPaths(),
+			path.GetPaths(&b.walletMu),
 		),
 		PathsSpecial: &logical.Paths{
 			SealWrapStorage: []string{

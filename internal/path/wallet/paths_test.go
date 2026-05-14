@@ -19,6 +19,7 @@ package wallet
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/hashicorp/vault/sdk/framework"
@@ -45,7 +46,8 @@ func pathRegisteredOps(p *framework.Path) map[logical.Operation]bool {
 func TestPaths_registerUpdateOnWriteEndpoints(t *testing.T) {
 	t.Parallel()
 
-	paths := Paths()
+	var walletMu sync.Map
+	paths := Paths(&walletMu)
 	if len(paths) == 0 {
 		t.Fatal("expected non-empty paths.")
 	}
