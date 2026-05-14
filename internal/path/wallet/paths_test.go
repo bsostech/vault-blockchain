@@ -119,3 +119,28 @@ func TestPaths_batchDerivedAccounts_registersCreateUpdate(t *testing.T) {
 		t.Fatal("missing wallets/*/accounts/batch path.")
 	}
 }
+
+// TestPaths_listDerivedAccounts_registersRead verifies the accounts/? path wires ReadOperation
+// alongside the existing List, Create, and Update operations.
+func TestPaths_listDerivedAccounts_registersRead(t *testing.T) {
+	t.Parallel()
+
+	var walletMu sync.Map
+	for _, p := range Paths(&walletMu) {
+		if p == nil || !strings.HasSuffix(p.Pattern, "/accounts/?") {
+			continue
+		}
+		ops := pathRegisteredOps(p)
+		if !ops[logical.ReadOperation] {
+			t.Fatalf("pattern %q missing ReadOperation.", p.Pattern)
+		}
+		if !ops[logical.ListOperation] {
+			t.Fatalf("pattern %q missing ListOperation.", p.Pattern)
+		}
+		if !ops[logical.CreateOperation] || !ops[logical.UpdateOperation] {
+			t.Fatalf("pattern %q missing Create+Update.", p.Pattern)
+		}
+		return
+	}
+	t.Fatal("missing wallets/*/accounts/? path.")
+}

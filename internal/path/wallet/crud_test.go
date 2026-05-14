@@ -210,9 +210,9 @@ func TestHandleWalletSignEIP712_recoversAddress(t *testing.T) {
 
 	req := &logical.Request{Storage: s}
 	resp, err := handleWalletSignEIP712(ctx, req, walletFieldData(map[string]interface{}{
-		"wallet_id":    "w3",
-		"index":        "0",
-		"payload":      payload,
+		"wallet_id": "w3",
+		"index":     "0",
+		"payload":   payload,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -784,8 +784,8 @@ func TestHandleListDerivedAccounts_noRange(t *testing.T) {
 	}
 }
 
-// TestHandleListDerivedAccounts_rangeFilter verifies start/end parameters filter the results.
-func TestHandleListDerivedAccounts_rangeFilter(t *testing.T) {
+// TestHandleListDerivedAccounts_ignoresStartEnd verifies LIST returns all indices; start/end are not filters.
+func TestHandleListDerivedAccounts_ignoresStartEnd(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -805,50 +805,148 @@ func TestHandleListDerivedAccounts_rangeFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 	keys, _ := resp.Data["keys"].([]string)
-	if len(keys) != 3 || keys[0] != "1" || keys[1] != "2" || keys[2] != "3" {
-		t.Fatalf("keys=%v want [1 2 3].", keys)
+	if len(keys) != 5 || keys[0] != "0" || keys[4] != "4" {
+		t.Fatalf("keys=%v want [0 1 2 3 4].", keys)
 	}
 }
 
-// TestHandleListDerivedAccounts_startExceedsMax verifies start > MaxBIP44AddressIndex returns an error.
-func TestHandleListDerivedAccounts_startExceedsMax(t *testing.T) {
+// TestHandleReadDerivedAccountsRange_success verifies inclusive range returns full metadata.
+func TestHandleReadDerivedAccountsRange_success(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	mustPutWalletSeed(ctx, t, s, "wmax", testMnemonic)
+	mustPutWalletSeed(ctx, t, s, "wmeta", testMnemonic)
+	for _, idx := range []string{"0", "1", "2"} {
+		mustPutDerivedAccount(ctx, t, s, "wmeta", idx, testMnemonic)
+	}
 	req := &logical.Request{Storage: s}
 
-	resp, err := handleListDerivedAccounts(ctx, req, walletFieldData(map[string]interface{}{
-		"wallet_id": "wmax",
-		"start":     "2147483648",
+	resp, err := handleReadDerivedAccountsRange(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wmeta",
+		"start":     "1",
+		"end":       "2",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error: %v", resp)
+	}
+	accts, _ := resp.Data["accounts"].([]interface{})
+	if len(accts) != 2 {
+		t.Fatalf("len(accounts)=%d want 2.", len(accts))
+	}
+}
+
+// TestHandleReadDerivedAccountsRange_missingIndex verifies a gap in the range returns an error.
+func TestHandleReadDerivedAccountsRange_missingIndex(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wgap", testMnemonic)
+	mustPutDerivedAccount(ctx, t, s, "wgap", "0", testMnemonic)
+	mustPutDerivedAccount(ctx, t, s, "wgap", "2", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	resp, err := handleReadDerivedAccountsRange(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wgap",
+		"start":     "0",
+		"end":       "2",
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resp == nil || !resp.IsError() {
-		t.Fatal("expected error response for start > MaxBIP44AddressIndex.")
+		t.Fatal("expected error when index 1 is missing.")
 	}
 }
 
-// TestHandleListDerivedAccounts_endExceedsMax verifies end > MaxBIP44AddressIndex returns an error.
-func TestHandleListDerivedAccounts_endExceedsMax(t *testing.T) {
+// TestHandleReadDerivedAccountsRange_spanExceedsMax verifies span > maxBulkReadDerivedSpan errors.
+func TestHandleReadDerivedAccountsRange_spanExceedsMax(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	s := new(logical.InmemStorage)
-	mustPutWalletSeed(ctx, t, s, "wmaxend", testMnemonic)
+	mustPutWalletSeed(ctx, t, s, "wspan2", testMnemonic)
 	req := &logical.Request{Storage: s}
 
-	resp, err := handleListDerivedAccounts(ctx, req, walletFieldData(map[string]interface{}{
-		"wallet_id": "wmaxend",
-		"end":       "2147483648",
+	resp, err := handleReadDerivedAccountsRange(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wspan2",
+		"start":     "0",
+		"end":       "10000",
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resp == nil || !resp.IsError() {
-		t.Fatal("expected error response for end > MaxBIP44AddressIndex.")
+		t.Fatal("expected error for span > maxBulkReadDerivedSpan.")
+	}
+}
+
+// TestHandleReadDerivedAccountsRange_startAfterEnd verifies start > end returns a logical error.
+func TestHandleReadDerivedAccountsRange_startAfterEnd(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "word", testMnemonic)
+	mustPutDerivedAccount(ctx, t, s, "word", "1", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	resp, err := handleReadDerivedAccountsRange(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "word",
+		"start":     "2",
+		"end":       "1",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error when start > end.")
+	}
+}
+
+// TestHandleReadDerivedAccountsRange_missingStart verifies omitting start returns a logical error.
+func TestHandleReadDerivedAccountsRange_missingStart(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wmissstart", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	resp, err := handleReadDerivedAccountsRange(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wmissstart",
+		"end":       "2",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error when start is missing.")
+	}
+}
+
+// TestHandleReadDerivedAccountsRange_missingEnd verifies omitting end returns a logical error.
+func TestHandleReadDerivedAccountsRange_missingEnd(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(logical.InmemStorage)
+	mustPutWalletSeed(ctx, t, s, "wmissend", testMnemonic)
+	req := &logical.Request{Storage: s}
+
+	resp, err := handleReadDerivedAccountsRange(ctx, req, walletFieldData(map[string]interface{}{
+		"wallet_id": "wmissend",
+		"start":     "0",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error when end is missing.")
 	}
 }
 
@@ -956,4 +1054,3 @@ func TestHandleDerivedAccountCreate_updateOperationCreatesAccount(t *testing.T) 
 		t.Fatal("expected non-empty address.")
 	}
 }
-

@@ -44,6 +44,9 @@ var errAccountIndexLimitReached = errors.New("account index limit reached")
 // maxBatchDerivedAccounts caps how many derived accounts one batch request may create.
 const maxBatchDerivedAccounts = 10000
 
+// maxBulkReadDerivedSpan is the maximum inclusive range size (end - start + 1) for bulk metadata read.
+const maxBulkReadDerivedSpan = 10000
+
 // putWalletSeedIfAbsent writes the BIP-39 seed JSON under wallets/<id>/seed if absent.
 func putWalletSeedIfAbsent(
 	ctx context.Context,
@@ -313,6 +316,89 @@ func makeHandleBatchDerivedAccountCreate(walletMu *sync.Map) framework.Operation
 	}
 }
 
+// parseInclusiveIndexRange validates start/end query parameters from FieldData (Method A: both required).
+// Returns (start, end, nil, nil) on valid input; (0, 0, errResp, nil) on logical validation error;
+// (0, 0, nil, err) is never returned but kept for signature consistency with handler conventions.
+func parseInclusiveIndexRange(data *framework.FieldData) (start, end int, errResp *logical.Response, err error) {
+	wrapper := model.NewFieldDataWrapper(data)
+	startStr, e := wrapper.MustGetString("start")
+	if e != nil || startStr == "" {
+		return 0, 0, logical.ErrorResponse("start is required"), nil
+	}
+	endStr, e := wrapper.MustGetString("end")
+	if e != nil || endStr == "" {
+		return 0, 0, logical.ErrorResponse("end is required"), nil
+	}
+
+	startVal, e := strconv.Atoi(startStr)
+	if e != nil || startVal < 0 {
+		return 0, 0, logical.ErrorResponse("start must be a non-negative integer"), nil
+	}
+	if uint64(startVal) > uint64(model.MaxBIP44AddressIndex) {
+		return 0, 0, logical.ErrorResponse("start must be <= 2147483647"), nil
+	}
+	endVal, e := strconv.Atoi(endStr)
+	if e != nil || endVal < 0 {
+		return 0, 0, logical.ErrorResponse("end must be a non-negative integer"), nil
+	}
+	if uint64(endVal) > uint64(model.MaxBIP44AddressIndex) {
+		return 0, 0, logical.ErrorResponse("end must be <= 2147483647"), nil
+	}
+	if startVal > endVal {
+		return 0, 0, logical.ErrorResponse("start must be <= end"), nil
+	}
+	span := uint64(endVal) - uint64(startVal) + 1
+	if span > maxBulkReadDerivedSpan {
+		return 0, 0, logical.ErrorResponse("range must include at most %d indices (end - start + 1)", maxBulkReadDerivedSpan), nil
+	}
+	return startVal, endVal, nil, nil
+}
+
+// handleReadDerivedAccountsRange returns address and derivation_path for each index in [start, end].
+// Both start and end are required query parameters. Every index in the range must exist in storage;
+// span (end - start + 1) must be <= maxBulkReadDerivedSpan.
+func handleReadDerivedAccountsRange(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	walletID, err := model.NewFieldDataWrapper(data).MustGetString("wallet_id")
+	if err != nil || walletID == "" {
+		return logical.ErrorResponse("wallet_id is required"), nil
+	}
+	startVal, endVal, errResp, err := parseInclusiveIndexRange(data)
+	if err != nil {
+		return nil, err
+	}
+	if errResp != nil {
+		return errResp, nil
+	}
+
+	accounts := make([]interface{}, 0, endVal-startVal+1)
+	for idx := startVal; idx <= endVal; idx++ {
+		indexStr := strconv.Itoa(idx)
+		entry, err := req.Storage.Get(ctx, storagekey.AccountKey(walletID, indexStr))
+		if err != nil {
+			return nil, fmt.Errorf("get derived account %s/%s: %w", walletID, indexStr, err)
+		}
+		if entry == nil {
+			return logical.ErrorResponse("derived account not found at index %s", indexStr), nil
+		}
+		var derived model.DerivedAccount
+		if err := entry.DecodeJSON(&derived); err != nil {
+			return nil, fmt.Errorf("decode derived account %s/%s: %w", walletID, indexStr, err)
+		}
+		accounts = append(accounts, map[string]interface{}{
+			"account_index":   indexStr,
+			"address":         derived.Address,
+			"derivation_path": derived.DerivationPath,
+		})
+	}
+
+	return &logical.Response{
+		Data: map[string]interface{}{
+			"wallet_id": walletID,
+			"accounts":  accounts,
+		},
+	}, nil
+}
+
 // handleDerivedAccountRead returns stored address and derivation path for wallet_id and index.
 func handleDerivedAccountRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	walletID, err := model.NewFieldDataWrapper(data).MustGetString("wallet_id")
@@ -347,7 +433,6 @@ func handleDerivedAccountRead(ctx context.Context, req *logical.Request, data *f
 }
 
 // handleListDerivedAccounts returns sorted index strings for derived accounts that exist in storage.
-// Optional start and end query parameters (inclusive) filter the returned indices to a range.
 func handleListDerivedAccounts(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	walletID, err := model.NewFieldDataWrapper(data).MustGetString("wallet_id")
 	if err != nil || walletID == "" {
@@ -358,35 +443,6 @@ func handleListDerivedAccounts(ctx context.Context, req *logical.Request, data *
 		return nil, fmt.Errorf("list derived accounts %s: %w", walletID, err)
 	}
 
-	startStr := model.NewFieldDataWrapper(data).GetString("start", "")
-	endStr := model.NewFieldDataWrapper(data).GetString("end", "")
-
-	hasStart := startStr != ""
-	hasEnd := endStr != ""
-
-	var startVal, endVal int
-	if hasStart {
-		startVal, err = strconv.Atoi(startStr)
-		if err != nil || startVal < 0 {
-			return logical.ErrorResponse("start must be a non-negative integer"), nil
-		}
-		if uint64(startVal) > uint64(model.MaxBIP44AddressIndex) {
-			return logical.ErrorResponse("start must be <= 2147483647"), nil
-		}
-	}
-	if hasEnd {
-		endVal, err = strconv.Atoi(endStr)
-		if err != nil || endVal < 0 {
-			return logical.ErrorResponse("end must be a non-negative integer"), nil
-		}
-		if uint64(endVal) > uint64(model.MaxBIP44AddressIndex) {
-			return logical.ErrorResponse("end must be <= 2147483647"), nil
-		}
-	}
-	if hasStart && hasEnd && startVal > endVal {
-		return logical.ErrorResponse("start must be <= end"), nil
-	}
-
 	indices := make([]int, 0, len(children))
 	for _, child := range children {
 		idxStr := strings.TrimSuffix(child, "/")
@@ -395,12 +451,6 @@ func handleListDerivedAccounts(ctx context.Context, req *logical.Request, data *
 		}
 		idxInt, err := strconv.Atoi(idxStr)
 		if err != nil {
-			continue
-		}
-		if hasStart && idxInt < startVal {
-			continue
-		}
-		if hasEnd && idxInt > endVal {
 			continue
 		}
 		indices = append(indices, idxInt)

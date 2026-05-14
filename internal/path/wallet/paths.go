@@ -154,29 +154,30 @@ func pathBatchDerivedAccounts(walletMu *sync.Map) *framework.Path {
 	}
 }
 
-// pathListDerivedAccounts registers LIST and auto-create on wallets/:wallet_id/accounts/.
-// LIST accepts optional start and end query parameters to filter indices (inclusive range).
+// pathListDerivedAccounts registers LIST, auto-create, and range-read on wallets/:wallet_id/accounts/.
 // POST derives and stores the next account using the auto-increment counter; walletMu ensures
 // the counter read-increment-write sequence is atomic within a single Vault active node.
+// GET (ReadOperation) with query params start and end returns an inclusive range of account metadata.
 func pathListDerivedAccounts(walletMu *sync.Map) *framework.Path {
 	walletID := framework.GenericNameRegex("wallet_id")
 	return &framework.Path{
 		Pattern:      "wallets/" + walletID + "/accounts/?",
-		HelpSynopsis: "List derived account indices (with optional range filter) or auto-create the next account.",
+		HelpSynopsis: "List derived account indices, auto-create the next account, or range-read account metadata.",
 		Fields: map[string]*framework.FieldSchema{
 			"wallet_id": {Type: framework.TypeString},
 			"start": {
 				Type:        framework.TypeString,
-				Description: "Inclusive lower bound for index range filter (non-negative integer). Optional.",
+				Description: "Inclusive lower index for range read (required with end; use with GET).",
 			},
 			"end": {
 				Type:        framework.TypeString,
-				Description: "Inclusive upper bound for index range filter (non-negative integer). Optional.",
+				Description: "Inclusive upper index for range read (required with start; use with GET).",
 			},
 		},
 		ExistenceCheck: ExistenceWalletDerivedAccountsRoot(),
 		Callbacks: map[logical.Operation]framework.OperationFunc{
 			logical.ListOperation:   handleListDerivedAccounts,
+			logical.ReadOperation:   handleReadDerivedAccountsRange,
 			logical.CreateOperation: makeHandleDerivedAccountCreate(walletMu),
 			logical.UpdateOperation: makeHandleDerivedAccountCreate(walletMu),
 		},

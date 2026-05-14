@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end checks against a live Vault with blockchain/ mounted.
 # Covers: wallet import, auto-derive first account, batch derive (accounts/batch), read derived,
-# list wallets/accounts, sign, sign-tx/legacy + sign-tx/eip1559, sign-eip712, ECIES encrypt/decrypt
+# list wallets/accounts, range-read derived accounts (GET accounts?start=N&end=M), sign, sign-tx/legacy + sign-tx/eip1559, sign-eip712, ECIES encrypt/decrypt
 # roundtrip.
 # Uses a fixed BIP-39 test vector so the derived address is deterministic.
 #
@@ -62,6 +62,7 @@ EIP712_PAYLOAD='{"types":{"EIP712Domain":[{"name":"name","type":"string"}],"Pers
 
 wallet_accounts_root="blockchain/wallets/${E2E_WALLET}/accounts/"
 wallet_accounts_batch="blockchain/wallets/${E2E_WALLET}/accounts/batch"
+wallet_accounts_read_root="blockchain/wallets/${E2E_WALLET}/accounts"
 acct_base="blockchain/wallets/${E2E_WALLET}/accounts/0"
 single_base="blockchain/accounts/${E2E_ACCOUNT}"
 
@@ -166,6 +167,30 @@ if ! echo "${LIST_ACCTS_JSON}" | jq -e '
   exit 1
 fi
 echo "  list keys OK"
+
+echo "== range-read derived accounts (GET accounts start=2 end=3) =="
+META_JSON="$(vault read -format=json "${wallet_accounts_read_root}" start=2 end=3)"
+META_WID="$(require_jq "${META_JSON}" '.data.wallet_id // empty' 'expected .data.wallet_id from range read')"
+if [[ "${META_WID}" != "${E2E_WALLET}" ]]; then
+  echo "error: range-read wallet_id mismatch: got ${META_WID} want ${E2E_WALLET}" >&2
+  exit 1
+fi
+if ! echo "${META_JSON}" | jq -e '
+  (.data.accounts | length == 2)
+  and (.data.accounts[0].account_index == "2")
+  and (.data.accounts[1].account_index == "3")
+  and (.data.accounts[0].address != null)
+  and (.data.accounts[1].address != null)
+  and (.data.accounts[0].derivation_path != null)
+  and (.data.accounts[1].derivation_path != null)
+' >/dev/null; then
+  echo "error: range-read start=2 end=3 response mismatch" >&2
+  echo "${META_JSON}" | jq . >&2
+  exit 1
+fi
+echo "  range-read: 2 accounts (index 2..3)"
+echo "  index 2 address: $(echo "${META_JSON}" | jq -r '.data.accounts[0].address // empty')"
+echo "  index 3 address: $(echo "${META_JSON}" | jq -r '.data.accounts[1].address // empty')"
 
 echo "== batch derive reject count > 10000 (expect vault write failure) =="
 set +e
