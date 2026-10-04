@@ -41,4 +41,10 @@ func TestKeys(t *testing.T) {
 	if got := storagekey.AccountsListPrefix("my-id"); got != "wallets/my-id/accounts/" {
 		t.Fatal(got)
 	}
+	if got := storagekey.KEKKey("kek1"); got != "byok/keks/kek1" {
+		t.Fatal(got)
+	}
+	if got := storagekey.KEKsListPrefix(); got != "byok/keks/" {
+		t.Fatal(got)
+	}
 }

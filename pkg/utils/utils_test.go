@@ -107,3 +107,16 @@ func TestValidNumber(t *testing.T) {
 		_ = ValidNumber("12abc")
 	})
 }
+
+// TestZeroBytes verifies ZeroBytes clears every byte and tolerates nil input.
+func TestZeroBytes(t *testing.T) {
+	t.Parallel()
+	b := []byte{1, 2, 3, 255}
+	ZeroBytes(b)
+	for i, v := range b {
+		if v != 0 {
+			t.Fatalf("b[%d]=%d want 0.", i, v)
+		}
+	}
+	ZeroBytes(nil)
+}

@@ -49,3 +49,13 @@ func AccountsListPrefix(walletID string) string {
 func CounterKey(walletID string) string {
 	return fmt.Sprintf("wallets/%s/counter", walletID)
 }
+
+// KEKKey returns the storage path for a BYOK key exchange key record (JSON with private key material).
+func KEKKey(name string) string {
+	return fmt.Sprintf("byok/keks/%s", name)
+}
+
+// KEKsListPrefix returns the list prefix for BYOK key exchange key names.
+func KEKsListPrefix() string {
+	return "byok/keks/"
+}
