@@ -415,7 +415,7 @@ It works in both directions, and the blob format is the same for both:
 | Direction | Receiving side | Sending side |
 | --------- | -------------- | ------------ |
 | Other store → vault-blockchain | `byok/keks` (create KEK) then `accounts/:name/import-byok` | the other store |
-| vault-blockchain → other store | the other store | `accounts/:name/export-byok` |
+| vault-blockchain → other store | the other store | `byok/export/:name` |
 
 The format follows the [Azure Key Vault BYOK specification](https://learn.microsoft.com/azure/key-vault/keys/byok-specification), so tools that already produce Azure `.byok` files for a secp256k1 key can feed vault-blockchain.
 
@@ -495,9 +495,9 @@ The account behaves like one created with `accounts/:name/import`: it can sign, 
 
 ### Export
 
-##### `POST blockchain/accounts/:name/export-byok`
+##### `POST blockchain/byok/export/:name`
 
-* `name` `(string: <required>)` - Logical account name in the path.
+* `name` `(string: <required>)` - Name of the account to export, in the path.
 * `kid` `(string: <required>)` - Identifier of the receiving KEK, written to the blob header.
 * `kek_public_key_pem` `(string: <required>)` - Receiving KEK public key as PEM (RSA, 2048, 3072, or 4096 bits).
 
@@ -505,12 +505,20 @@ The account behaves like one created with `accounts/:name/import`: it can sign, 
 
 Export copies the key: the account is unchanged. Compare `kek_public_key_sha256` with the fingerprint shown by the receiving side to confirm the public key was not replaced before it reached you.
 
-Export returns the account's private key wrapped for whatever public key the caller supplies, so it must only be granted to trusted operators. `configs/blockchain_byok.hcl` is a policy for them; `configs/blockchain_user.hcl` denies `export-byok` explicitly, because its `accounts/<name>/*` wildcard would otherwise include it.
+Export returns the account's private key wrapped for whatever public key the caller supplies, so it must only be granted to trusted operators. It is deliberately under `byok/export/` and not under `accounts/`: the `accounts/<entity>/*` wildcard in `configs/blockchain_user.hcl` therefore does not cover it, and no deny rule is needed. `configs/blockchain_byok.hcl` is a policy for the operators who may use it. If you wrote your own policies, make sure none of them grants `blockchain/byok/*`.
 
 | HTTP | Error | Cause |
 | ---- | ----- | ----- |
 | 400 | `invalid_kek_public_key` | The PEM cannot be parsed, is not RSA, or is not 2048, 3072, or 4096 bits. |
 | 404 | `account_not_found` | No such account. |
+
+### End-to-End Check
+
+`scripts/e2e_byok.sh` exercises all of the above against a live Vault over HTTP, including the policies in `configs/`: users are refused `byok/export/` and `byok/keks/`, operators are not. It creates an auth mount, policies, and users, so run it against a throwaway dev server:
+
+```bash
+VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=<root token> bash scripts/e2e_byok.sh
+```
 
 ### Example: Wrapping a Key With OpenSSL
 
@@ -552,5 +560,5 @@ To send a key the other way, create a KEK on the receiving side, then call `expo
 ```bash
 curl -s -X POST -H "X-Vault-Token: $VAULT_TOKEN" \
   --data "$(jq -n --arg kid "$KID" --rawfile pem kek_pub.pem '{kid: $kid, kek_public_key_pem: $pem}')" \
-  "$VAULT_ADDR/v1/blockchain/accounts/alice/export-byok" | jq -r .data.byok_blob | base64 -d > alice.byok
+  "$VAULT_ADDR/v1/blockchain/byok/export/alice" | jq -r .data.byok_blob | base64 -d > alice.byok
 ```

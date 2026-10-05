@@ -66,18 +66,22 @@ func pathSingleKeyImportBYOK() *framework.Path {
 	}
 }
 
-// pathSingleKeyExportBYOK registers accounts/:name/export-byok for exporting a key wrapped as a .byok blob.
+// pathSingleKeyExportBYOK registers byok/export/:name for exporting an account key wrapped as a .byok blob.
+//
+// It deliberately lives outside accounts/: the user policy grants accounts/<entity>/*, and a path under it
+// would hand every user a way to take their own private key out. Policies that do not name byok/export/
+// never match it.
 func pathSingleKeyExportBYOK() *framework.Path {
 	return &framework.Path{
-		Pattern:      "accounts/" + framework.GenericNameRegex("name") + "/export-byok",
+		Pattern:      "byok/export/" + framework.GenericNameRegex("name"),
 		HelpSynopsis: "Export an account private key wrapped for another party's key exchange key (KEK).",
 		HelpDescription: "Wraps the account's private key for the given RSA public key and returns a .byok blob. " +
 			"The account is not changed. Only the holder of the matching KEK private key can unwrap it, " +
-			"so grant this path only to trusted operators.",
+			"so grant byok/export/ only to trusted operators.",
 		Fields: map[string]*framework.FieldSchema{
 			"name": {
 				Type:        framework.TypeString,
-				Description: "Logical account name in the path.",
+				Description: "Name of the account to export, in the path.",
 			},
 			"kid": {
 				Type:        framework.TypeString,
