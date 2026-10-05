@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/vault/sdk/framework"
@@ -67,8 +68,8 @@ func existenceKEK() framework.ExistenceFunc {
 	}
 }
 
-// loadKEK returns the stored KEK, or nil when none exists.
-func loadKEK(ctx context.Context, s logical.Storage, name string) (*model.KEK, error) {
+// LoadKEK returns the stored KEK, or nil when none exists.
+func LoadKEK(ctx context.Context, s logical.Storage, name string) (*model.KEK, error) {
 	entry, err := s.Get(ctx, storagekey.KEKKey(name))
 	if err != nil {
 		return nil, fmt.Errorf("get kek %s: %w", name, err)
@@ -81,6 +82,21 @@ func loadKEK(ctx context.Context, s logical.Storage, name string) (*model.KEK, e
 		return nil, fmt.Errorf("decode kek %s: %w", name, err)
 	}
 	return &k, nil
+}
+
+// ParseKID splits a kid of the form <mount>byok/keks/<name>/<id> into the KEK name and id.
+// The mount prefix is ignored: the random id already makes a kid unique to one KEK instance.
+func ParseKID(kid string) (name, id string, ok bool) {
+	const marker = "byok/keks/"
+	i := strings.LastIndex(kid, marker)
+	if i < 0 {
+		return "", "", false
+	}
+	parts := strings.Split(kid[i+len(marker):], "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
 }
 
 // kekResponseData builds the public view of a KEK. It never includes private key material.
@@ -127,7 +143,7 @@ func handleKEKCreate(
 		return logical.ErrorResponse("ttl must not be negative"), nil
 	}
 
-	existing, err := loadKEK(ctx, req.Storage, name)
+	existing, err := LoadKEK(ctx, req.Storage, name)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +194,7 @@ func handleKEKRead(
 	if err != nil || name == "" {
 		return logical.ErrorResponse("kek_name is required"), nil
 	}
-	k, err := loadKEK(ctx, req.Storage, name)
+	k, err := LoadKEK(ctx, req.Storage, name)
 	if err != nil {
 		return nil, err
 	}

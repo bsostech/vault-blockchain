@@ -20,13 +20,13 @@ package model
 import (
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"time"
 
+	"github.com/bsostech/vault-blockchain/internal/byokcrypto"
 	"github.com/bsostech/vault-blockchain/pkg/utils"
 )
 
@@ -93,24 +93,15 @@ func (k *KEK) PrivateKey() (*rsa.PrivateKey, error) {
 	return priv, nil
 }
 
-// publicKeyDER returns the public key as DER-encoded SubjectPublicKeyInfo.
-func (k *KEK) publicKeyDER() ([]byte, error) {
+// PublicKeyPEM returns the public key as a PEM "PUBLIC KEY" block (SubjectPublicKeyInfo).
+func (k *KEK) PublicKeyPEM() (string, error) {
 	priv, err := k.PrivateKey()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	der, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
 	if err != nil {
-		return nil, fmt.Errorf("marshal public key: %w", err)
-	}
-	return der, nil
-}
-
-// PublicKeyPEM returns the public key as a PEM "PUBLIC KEY" block (SubjectPublicKeyInfo).
-func (k *KEK) PublicKeyPEM() (string, error) {
-	der, err := k.publicKeyDER()
-	if err != nil {
-		return "", err
+		return "", fmt.Errorf("marshal public key: %w", err)
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})), nil
 }
@@ -118,10 +109,9 @@ func (k *KEK) PublicKeyPEM() (string, error) {
 // PublicKeyFingerprint returns the hex SHA-256 of the DER-encoded public key. The party holding the
 // other end can compare it out of band to confirm the public key was not replaced in transit.
 func (k *KEK) PublicKeyFingerprint() (string, error) {
-	der, err := k.publicKeyDER()
+	priv, err := k.PrivateKey()
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(der)
-	return hex.EncodeToString(sum[:]), nil
+	return byokcrypto.PublicKeyFingerprint(&priv.PublicKey)
 }

@@ -26,11 +26,3 @@ path "blockchain/wallets/+/create" {
 path "blockchain/wallets/+/import" {
     capabilities = [ "create", "update" ]
 }
-
-path "blockchain/byok/keks/" {
-    capabilities = [ "list" ]
-}
-
-path "blockchain/byok/keks/*" {
-    capabilities = [ "create", "read", "update", "delete" ]
-}

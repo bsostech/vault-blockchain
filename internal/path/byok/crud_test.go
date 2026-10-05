@@ -382,7 +382,7 @@ func TestKEKStoredPrivateKeyMatchesPublic(t *testing.T) {
 	resp := do(t, b, s, logical.CreateOperation, "byok/keks/kek1", map[string]interface{}{"key_size": 2048})
 	pub := parsePublicKey(t, resp.Data["public_key_pem"].(string))
 
-	k, err := loadKEK(context.Background(), s, "kek1")
+	k, err := LoadKEK(context.Background(), s, "kek1")
 	if err != nil || k == nil {
 		t.Fatalf("loadKEK: %v, %v", k, err)
 	}
@@ -392,5 +392,26 @@ func TestKEKStoredPrivateKeyMatchesPublic(t *testing.T) {
 	}
 	if !priv.PublicKey.Equal(pub) {
 		t.Fatal("stored private key does not match returned public key")
+	}
+}
+
+// TestParseKID verifies kid parsing accepts the issued format and rejects malformed values.
+func TestParseKID(t *testing.T) {
+	t.Parallel()
+	good := map[string][2]string{
+		"blockchain/byok/keks/kek1/abcd": {"kek1", "abcd"},
+		"byok/keks/kek1/abcd":            {"kek1", "abcd"},
+		"a/b/byok/keks/k-1/0123":         {"k-1", "0123"},
+	}
+	for kid, want := range good {
+		name, id, ok := ParseKID(kid)
+		if !ok || name != want[0] || id != want[1] {
+			t.Fatalf("%q: got %q %q %v", kid, name, id, ok)
+		}
+	}
+	for _, kid := range []string{"", "kek1/abcd", "byok/keks/", "byok/keks/kek1", "byok/keks/kek1/", "byok/keks//abcd", "byok/keks/a/b/c"} {
+		if _, _, ok := ParseKID(kid); ok {
+			t.Fatalf("%q accepted", kid)
+		}
 	}
 }
