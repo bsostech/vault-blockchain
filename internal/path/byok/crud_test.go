@@ -26,6 +26,7 @@ import (
 	"encoding/pem"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -413,5 +414,52 @@ func TestParseKID(t *testing.T) {
 		if _, _, ok := ParseKID(kid); ok {
 			t.Fatalf("%q accepted", kid)
 		}
+	}
+}
+
+// TestKEKCreate_concurrentSameName verifies concurrent creates of one name yield exactly one KEK and 409 for the rest.
+func TestKEKCreate_concurrentSameName(t *testing.T) {
+	t.Parallel()
+	b, s := newTestBackend(t)
+
+	const n = 8
+	resps := make([]*logical.Response, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			resps[i], errs[i] = b.HandleRequest(context.Background(), &logical.Request{
+				Operation:  logical.CreateOperation,
+				Path:       "byok/keks/race",
+				Data:       map[string]interface{}{"key_size": 2048},
+				Storage:    s,
+				MountPoint: "blockchain/",
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	var created []*logical.Response
+	for i := 0; i < n; i++ {
+		if errs[i] != nil {
+			t.Fatalf("request %d: %v", i, errs[i])
+		}
+		switch {
+		case statusOf(resps[i]) == http.StatusConflict:
+		case resps[i] != nil && !resps[i].IsError():
+			created = append(created, resps[i])
+		default:
+			t.Fatalf("request %d: want 200 or 409, got %#v", i, resps[i])
+		}
+	}
+	if len(created) != 1 {
+		t.Fatalf("%d creates succeeded, want 1", len(created))
+	}
+
+	stored := do(t, b, s, logical.ReadOperation, "byok/keks/race", nil)
+	if stored.Data["kid"] != created[0].Data["kid"] {
+		t.Fatalf("stored kid %v, but the successful create returned %v", stored.Data["kid"], created[0].Data["kid"])
 	}
 }

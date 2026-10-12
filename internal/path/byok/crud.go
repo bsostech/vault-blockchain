@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/helper/locksutil"
 	"github.com/hashicorp/vault/sdk/logical"
 
 	"github.com/bsostech/vault-blockchain/internal/model"
@@ -38,6 +39,9 @@ const defaultKEKKeySize = 3072
 
 // errKEKAlreadyExists indicates a KEK already exists for the name.
 var errKEKAlreadyExists = errors.New("kek_exists: kek already exists")
+
+// kekLocks serialises the existence check and write of a KEK name so concurrent creates cannot both succeed.
+var kekLocks = locksutil.CreateLocks()
 
 // validKEKKeySize reports whether bits is a supported RSA modulus size.
 func validKEKKeySize(bits int) bool {
@@ -160,6 +164,17 @@ func handleKEKCreate(
 	entry, err := logical.StorageEntryJSON(storagekey.KEKKey(name), k)
 	if err != nil {
 		return nil, fmt.Errorf("encode kek %s: %w", name, err)
+	}
+
+	// Key generation runs outside the lock; the check above only fails fast, this one is authoritative.
+	lock := locksutil.LockForKey(kekLocks, name)
+	lock.Lock()
+	defer lock.Unlock()
+	if existing, err := LoadKEK(ctx, req.Storage, name); err != nil {
+		return nil, err
+	} else if existing != nil {
+		utils.ZeroBytes(existing.PrivateKeyDER)
+		return respondKEKConflict(req)
 	}
 	if err := req.Storage.Put(ctx, entry); err != nil {
 		return nil, fmt.Errorf("put kek %s: %w", name, err)

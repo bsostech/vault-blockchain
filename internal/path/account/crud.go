@@ -29,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/helper/locksutil"
 	"github.com/hashicorp/vault/sdk/logical"
 
 	"github.com/bsostech/vault-blockchain/internal/model"
@@ -38,6 +39,9 @@ import (
 
 // errSingleKeyAccountAlreadyExists indicates a account already exists for name.
 var errSingleKeyAccountAlreadyExists = errors.New("account already exists")
+
+// accountLocks serialises the existence check and write of an account name so concurrent writes cannot both succeed.
+var accountLocks = locksutil.CreateLocks()
 
 // respondSingleKeyAccountConflict returns HTTP 409 for duplicate single-key account operations.
 func respondSingleKeyAccountConflict(req *logical.Request) (*logical.Response, error) {
@@ -56,6 +60,9 @@ func putSingleKeyAccountIfAbsent(
 	account *model.Account,
 ) error {
 	key := storagekey.SingleKeyAccountKey(name)
+	lock := locksutil.LockForKey(accountLocks, name)
+	lock.Lock()
+	defer lock.Unlock()
 	existing, err := req.Storage.Get(ctx, key)
 	if err != nil {
 		return fmt.Errorf("get single-key account %s: %w", name, err)

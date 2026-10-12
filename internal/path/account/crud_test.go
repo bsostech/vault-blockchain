@@ -21,7 +21,9 @@ import (
 	"context"
 	"math/big"
 	"net/http"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -604,5 +606,63 @@ func TestHandleSingleKeyAccountsList_sorted(t *testing.T) {
 	}
 	if len(keys) != 2 || keys[0] != "a" || keys[1] != "b" {
 		t.Fatalf("keys=%v want [a b].", keys)
+	}
+}
+
+// slowGetStorage delays every Get so that a check-then-put without a lock reliably interleaves.
+type slowGetStorage struct {
+	logical.InmemStorage
+}
+
+func (s *slowGetStorage) Get(ctx context.Context, key string) (*logical.StorageEntry, error) {
+	time.Sleep(20 * time.Millisecond)
+	return s.InmemStorage.Get(ctx, key)
+}
+
+// TestHandleSingleKeyAccountCreate_concurrentSameName verifies concurrent creates of one name store exactly one
+// account and return 409 for the rest, so no caller is handed an address that was overwritten.
+func TestHandleSingleKeyAccountCreate_concurrentSameName(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := new(slowGetStorage)
+
+	const n = 8
+	resps := make([]*logical.Response, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			resps[i], errs[i] = handleSingleKeyAccountCreate(ctx, &logical.Request{Storage: s},
+				fieldData(map[string]interface{}{"name": "race"}))
+		}(i)
+	}
+	wg.Wait()
+
+	var created []*logical.Response
+	for i := 0; i < n; i++ {
+		if errs[i] != nil {
+			t.Fatalf("request %d: %v", i, errs[i])
+		}
+		if resps[i] == nil {
+			t.Fatalf("request %d: nil response", i)
+		}
+		if code, _ := resps[i].Data[logical.HTTPStatusCode].(int); code == http.StatusConflict {
+			continue
+		}
+		created = append(created, resps[i])
+	}
+	if len(created) != 1 {
+		t.Fatalf("%d creates succeeded, want 1", len(created))
+	}
+
+	stored, err := ReadSingleKeyAccount(ctx, s, "race")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.AddressStr != created[0].Data["address"] {
+		t.Fatalf("stored address %s, but the successful create returned %v", stored.AddressStr, created[0].Data["address"])
 	}
 }
