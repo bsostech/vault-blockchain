@@ -49,3 +49,10 @@ func ValidNumber(input string) *big.Int {
 	amount := math.MustParseBig256(input)
 	return amount.Abs(amount)
 }
+
+// ZeroBytes overwrites b with zeros. Use it to clear sensitive buffers (for example DER-encoded keys) after use.
+func ZeroBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}

@@ -25,10 +25,11 @@ import (
 
 	"github.com/bsostech/vault-blockchain/internal/path"
 	"github.com/bsostech/vault-blockchain/internal/path/account"
+	"github.com/bsostech/vault-blockchain/internal/path/byok"
 	"github.com/bsostech/vault-blockchain/internal/path/wallet"
 )
 
-// TestGetPaths verifies merged account and wallet paths are non-empty, unique, and cover both prefixes.
+// TestGetPaths verifies merged account, wallet, and byok paths are non-empty, unique, and cover both prefixes.
 func TestGetPaths(t *testing.T) {
 	t.Parallel()
 
@@ -38,7 +39,7 @@ func TestGetPaths(t *testing.T) {
 		t.Fatal("expected non-empty paths.")
 	}
 
-	wantLen := len(account.Paths()) + len(wallet.Paths(&walletMu))
+	wantLen := len(account.Paths()) + len(wallet.Paths(&walletMu)) + len(byok.Paths())
 	if len(got) != wantLen {
 		t.Fatalf("len(got)=%d want %d.", len(got), wantLen)
 	}
@@ -57,7 +58,7 @@ func TestGetPaths(t *testing.T) {
 		seen[p.Pattern] = struct{}{}
 	}
 
-	var hasAccounts, hasWallets bool
+	var hasAccounts, hasWallets, hasBYOK bool
 	for pattern := range seen {
 		if len(pattern) >= len("accounts/") && pattern[:len("accounts/")] == "accounts/" {
 			hasAccounts = true
@@ -65,12 +66,18 @@ func TestGetPaths(t *testing.T) {
 		if len(pattern) >= len("wallets/") && pattern[:len("wallets/")] == "wallets/" {
 			hasWallets = true
 		}
+		if len(pattern) >= len("byok/") && pattern[:len("byok/")] == "byok/" {
+			hasBYOK = true
+		}
 	}
 	if !hasAccounts {
 		t.Fatal("expected at least one accounts/ path.")
 	}
 	if !hasWallets {
 		t.Fatal("expected at least one wallets/ path.")
+	}
+	if !hasBYOK {
+		t.Fatal("expected at least one byok/ path.")
 	}
 
 	_ = framework.Path{}

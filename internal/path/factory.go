@@ -23,6 +23,7 @@ import (
 	"github.com/hashicorp/vault/sdk/framework"
 
 	"github.com/bsostech/vault-blockchain/internal/path/account"
+	"github.com/bsostech/vault-blockchain/internal/path/byok"
 	"github.com/bsostech/vault-blockchain/internal/path/wallet"
 )
 
@@ -30,8 +31,10 @@ import (
 func GetPaths(walletMu *sync.Map) []*framework.Path {
 	acctPaths := account.Paths()
 	walletPaths := wallet.Paths(walletMu)
-	out := make([]*framework.Path, 0, len(acctPaths)+len(walletPaths))
+	byokPaths := byok.Paths()
+	out := make([]*framework.Path, 0, len(acctPaths)+len(walletPaths)+len(byokPaths))
 	out = append(out, acctPaths...)
 	out = append(out, walletPaths...)
+	out = append(out, byokPaths...)
 	return out
 }
