@@ -90,7 +90,7 @@ func TestWrapBlobLayout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	k := kek.PublicKey.Size()
+	k := kek.Size()
 	if want := k + (len(der)+7)/8*8 + 8; len(ct) != want {
 		t.Fatalf("len=%d want %d", len(ct), want)
 	}
@@ -145,7 +145,7 @@ func TestUnwrapFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	k := kek.PublicKey.Size()
+	k := kek.Size()
 
 	withCT := func(b []byte) *Blob {
 		c := *blob
