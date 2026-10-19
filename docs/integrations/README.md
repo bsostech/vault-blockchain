@@ -7,7 +7,7 @@ These guides show how a PKCS#11 HSM exchanges secp256k1 keys with vault-blockcha
 | Thales Luna HSM 7 | Supported | Supported | [LunaHSM-integration.md](LunaHSM-integration.md) |
 | SoftHSM2 | Supported | Supported | [SoftHSM-integration.md](SoftHSM-integration.md) |
 
-Both HSMs were tested with KEKs of 2048, 3072, and 4096 bits. Other PKCS#11 HSMs follow the same steps; what usually differs is the AES-KWP mechanism code, which template attributes the token accepts, and its key export policy. See [Other HSMs](#other-hsms).
+Both HSMs were tested with KEKs of 2048, 3072, and 4096 bits. On Luna, HSM → vault-blockchain needs a partition in Key Export mode; see [Which Directions a Partition Supports](LunaHSM-integration.md#which-directions-a-partition-supports). Other PKCS#11 HSMs follow the same steps; what usually differs is the AES-KWP mechanism code, which template attributes the token accepts, and its key export policy. See [Other HSMs](#other-hsms).
 
 This page covers what is common to every HSM: the call sequence, the templates, and the format conversions. The vendor guides only list what is specific to each HSM.
 

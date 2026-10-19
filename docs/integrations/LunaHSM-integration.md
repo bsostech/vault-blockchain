@@ -53,7 +53,14 @@ Read this before turning on policy 1 (see Thales, *Configuring the Partition for
 - So do not turn on policy 1 on a partition that already holds keys. Prepare a partition in Key Export mode first, then create the keys to transfer in it, with `CKA_EXTRACTABLE=true`.
 - While policy 1 is on, the Crypto Officer can wrap and take away any extractable private key. Decide whether to turn it off after the transfer; `partition showpolicies -verbose` shows whether that change is destructive.
 
-vault-blockchain → HSM needs only policy 2, so it works on a partition in Cloning mode.
+### Which Directions a Partition Supports
+
+| Partition mode | vault-blockchain → HSM | HSM → vault-blockchain |
+| -------------- | ---------------------- | ---------------------- |
+| Cloning (policy 0 on) | Supported: needs only policies 2 and 6 | Not possible: private keys cannot be wrapped |
+| Key Export (policy 1 on) | Supported | Supported |
+
+Production deployments usually keep Cloning mode, for example to replicate keys across several HSMs in a high-availability group. On such partitions, plan for vault-blockchain → HSM only: create or import the keys in vault-blockchain and export them to the HSM.
 
 ## Tools
 
