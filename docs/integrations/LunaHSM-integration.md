@@ -61,7 +61,3 @@ Read this before turning on policy 1 (see Thales, *Configuring the Partition for
 | Key Export (policy 1 on) | Supported | Supported |
 
 Production deployments usually keep Cloning mode, for example to replicate keys across several HSMs in a high-availability group. On such partitions, plan for vault-blockchain → HSM only: create or import the keys in vault-blockchain and export them to the HSM.
-
-## Tools
-
-Thales also offers `hsmbyok`, which produces the same Azure `.byok` format for Azure Key Vault. Thales lists only P-256, P-384, and P-521 for it; it has not been verified with secp256k1.
