@@ -95,7 +95,7 @@ Use one KEK per transfer and delete it afterwards. Both sides should compute the
    ```bash
    curl -s -X POST -H "X-Vault-Token: $VAULT_TOKEN" \
      --data "$(jq -n --arg kid "hsm-kek-01" --rawfile pem kek_pub.pem '{kid: $kid, kek_public_key_pem: $pem}')" \
-     "$VAULT_ADDR/v1/blockchain/byok/export/alice" > export.json
+     "$VAULT_ADDR/v1/blockchain/byok/export/account/alice" > export.json
    jq -r .data.kek_public_key_sha256 export.json   # must equal the HSM side's fingerprint
    jq -r .data.byok_blob export.json | base64 -d > alice.byok
    ```
@@ -158,13 +158,13 @@ openssl rsa -RSAPublicKey_in -inform DER -in rsapub.der -pubout -out kek_pub.pem
 openssl pkey -pubin -in kek_pub.pem -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1
 ```
 
-`byok/export` accepts both `PUBLIC KEY` (SubjectPublicKeyInfo) and `RSA PUBLIC KEY` (PKCS#1) PEM.
+`byok/export/account/:name` accepts both `PUBLIC KEY` (SubjectPublicKeyInfo) and `RSA PUBLIC KEY` (PKCS#1) PEM.
 
 ### Private Key Encoding
 
 | Produced by | Content | DER | After AES-KWP |
 | ----------- | ------- | --- | ------------- |
-| vault-blockchain `byok/export` | `ECPrivateKey` with the uncompressed public key, no `[0]` parameters; byte-identical to OpenSSL `pkcs8 -topk8` | 135 bytes | 144 bytes |
+| vault-blockchain `byok/export/account/:name` | `ECPrivateKey` with the uncompressed public key, no `[0]` parameters; byte-identical to OpenSSL `pkcs8 -topk8` | 135 bytes | 144 bytes |
 | Luna and SoftHSM2 `C_WrapKey` | `ECPrivateKey` without the public key | 64 bytes | 72 bytes |
 
 vault-blockchain and both HSMs accept either form. On import, vault-blockchain also accepts the `[0]` curve parameters if they name secp256k1 and checks that an included public key matches the private key. It rejects a compressed public key or a bare SEC1 key (`BEGIN EC PRIVATE KEY`, not wrapped in PKCS#8) with `invalid_key`, and any other curve with `unsupported_curve`.

@@ -129,7 +129,7 @@ func (e *byokEnv) importBYOK(name, blob string) *logical.Response {
 // exportBYOK sends an export-byok write for the account, wrapping for kek.
 func (e *byokEnv) exportBYOK(name string, kek map[string]interface{}) *logical.Response {
 	e.t.Helper()
-	return e.do(logical.UpdateOperation, "byok/export/"+name, map[string]interface{}{
+	return e.do(logical.UpdateOperation, "byok/export/account/"+name, map[string]interface{}{
 		"kid":                kek["kid"],
 		"kek_public_key_pem": kek["public_key_pem"],
 	})
@@ -593,7 +593,7 @@ func TestExportBYOKRejects(t *testing.T) {
 	ecPEM := pemOf(t, &mustP256(t).PublicKey)
 
 	send := func(name string, data map[string]interface{}) *logical.Response {
-		return e.do(logical.UpdateOperation, "byok/export/"+name, data)
+		return e.do(logical.UpdateOperation, "byok/export/account/"+name, data)
 	}
 
 	t.Run("missing kid", func(t *testing.T) {
@@ -667,7 +667,7 @@ func TestExportPathOutsideAccounts(t *testing.T) {
 			t.Fatalf("export path %q is under accounts/", p.Pattern)
 		}
 	}
-	if got := pathSingleKeyExportBYOK().Pattern; !strings.HasPrefix(got, "byok/export/") {
-		t.Fatalf("export pattern=%q, want prefix byok/export/", got)
+	if got := pathSingleKeyExportBYOK().Pattern; !strings.HasPrefix(got, "byok/export/account/") {
+		t.Fatalf("export pattern=%q, want prefix byok/export/account/", got)
 	}
 }
