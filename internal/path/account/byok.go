@@ -37,9 +37,6 @@ import (
 	"github.com/bsostech/vault-blockchain/pkg/utils"
 )
 
-// maxKIDLength bounds the kid accepted on export, which is copied into the blob header.
-const maxKIDLength = 1024
-
 // pathSingleKeyImportBYOK registers accounts/:name/import-byok for importing a key wrapped as a .byok blob.
 func pathSingleKeyImportBYOK() *framework.Path {
 	return &framework.Path{
@@ -100,16 +97,6 @@ func pathSingleKeyExportBYOK() *framework.Path {
 	}
 }
 
-// respondCode returns an error response whose message starts with a machine-readable code, with the given
-// HTTP status. A 400 is a plain Vault error response.
-func respondCode(req *logical.Request, status int, code, msg string) (*logical.Response, error) {
-	resp := logical.ErrorResponse("%s: %s", code, msg)
-	if status == http.StatusBadRequest {
-		return resp, nil
-	}
-	return logical.RespondWithStatusCode(resp, req, status)
-}
-
 // handleSingleKeyAccountImportBYOK unwraps a .byok blob with a stored KEK and stores the key as an account.
 func handleSingleKeyAccountImportBYOK(
 	ctx context.Context,
@@ -128,28 +115,28 @@ func handleSingleKeyAccountImportBYOK(
 
 	blob, err := byokcrypto.ParseBlob(b64)
 	if err != nil {
-		return respondCode(req, http.StatusBadRequest, "invalid_blob", err.Error())
+		return byok.RespondCode(req, http.StatusBadRequest, "invalid_blob", err.Error())
 	}
 
 	kekName, kekID, ok := byok.ParseKID(blob.Header.KID)
 	if !ok {
-		return respondCode(req, http.StatusNotFound, "kek_not_found", "no kek matches the blob kid")
+		return byok.RespondCode(req, http.StatusNotFound, "kek_not_found", "no kek matches the blob kid")
 	}
 	kek, err := byok.LoadKEK(ctx, req.Storage, kekName)
 	if err != nil {
 		return nil, err
 	}
 	if kek == nil || kek.ID != kekID {
-		return respondCode(req, http.StatusNotFound, "kek_not_found", "no kek matches the blob kid")
+		return byok.RespondCode(req, http.StatusNotFound, "kek_not_found", "no kek matches the blob kid")
 	}
 	defer utils.ZeroBytes(kek.PrivateKeyDER)
 	if kek.Expired(time.Now()) {
-		return respondCode(req, http.StatusGone, "kek_expired", "the kek has expired")
+		return byok.RespondCode(req, http.StatusGone, "kek_expired", "the kek has expired")
 	}
 
 	// Fail early on a taken name, before doing any private key work.
 	if _, err := ReadSingleKeyAccount(ctx, req.Storage, name); err == nil {
-		return respondCode(req, http.StatusConflict, "account_exists", "account already exists")
+		return byok.RespondCode(req, http.StatusConflict, "account_exists", "account already exists")
 	} else if !errors.Is(err, ErrSingleKeyAccountMissing) {
 		return nil, err
 	}
@@ -161,18 +148,18 @@ func handleSingleKeyAccountImportBYOK(
 	pkcs8, err := byokcrypto.UnwrapKey(rsaKey, blob)
 	if err != nil {
 		if errors.Is(err, byokcrypto.ErrInvalidBlob) {
-			return respondCode(req, http.StatusBadRequest, "invalid_blob", err.Error())
+			return byok.RespondCode(req, http.StatusBadRequest, "invalid_blob", err.Error())
 		}
-		return respondCode(req, http.StatusBadRequest, "unwrap_failed", "the blob could not be unwrapped with this kek")
+		return byok.RespondCode(req, http.StatusBadRequest, "unwrap_failed", "the blob could not be unwrapped with this kek")
 	}
 	defer utils.ZeroBytes(pkcs8)
 
 	priv, err := byokcrypto.ParseSecp256k1PKCS8(pkcs8)
 	if err != nil {
 		if errors.Is(err, byokcrypto.ErrUnsupportedCurve) {
-			return respondCode(req, http.StatusBadRequest, "unsupported_curve", err.Error())
+			return byok.RespondCode(req, http.StatusBadRequest, "unsupported_curve", err.Error())
 		}
-		return respondCode(req, http.StatusBadRequest, "invalid_key", err.Error())
+		return byok.RespondCode(req, http.StatusBadRequest, "invalid_key", err.Error())
 	}
 	defer utils.ZeroKey(priv)
 
@@ -183,7 +170,7 @@ func handleSingleKeyAccountImportBYOK(
 	acct := model.NewAccount(address, privHex, publicKeyString)
 	if err := putSingleKeyAccountIfAbsent(ctx, req, name, acct); err != nil {
 		if errors.Is(err, errSingleKeyAccountAlreadyExists) {
-			return respondCode(req, http.StatusConflict, "account_exists", "account already exists")
+			return byok.RespondCode(req, http.StatusConflict, "account_exists", "account already exists")
 		}
 		return nil, err
 	}
@@ -210,8 +197,8 @@ func handleSingleKeyAccountExportBYOK(
 	if kid == "" {
 		return logical.ErrorResponse("kid is required"), nil
 	}
-	if len(kid) > maxKIDLength {
-		return logical.ErrorResponse("kid is longer than %d bytes", maxKIDLength), nil
+	if len(kid) > byok.MaxKIDLength {
+		return logical.ErrorResponse("kid is longer than %d bytes", byok.MaxKIDLength), nil
 	}
 	pemStr := wrapper.GetString("kek_public_key_pem", "")
 	if pemStr == "" {
@@ -219,14 +206,13 @@ func handleSingleKeyAccountExportBYOK(
 	}
 	kekPub, err := byokcrypto.ParseKEKPublicKeyPEM(pemStr)
 	if err != nil {
-		return respondCode(req, http.StatusBadRequest, "invalid_kek_public_key",
-			"kek_public_key_pem must be an RSA public key of 2048, 3072, or 4096 bits")
+		return byok.RespondCode(req, http.StatusBadRequest, "invalid_kek_public_key", byok.InvalidKEKPublicKeyMessage)
 	}
 
 	acct, err := ReadSingleKeyAccount(ctx, req.Storage, name)
 	if err != nil {
 		if errors.Is(err, ErrSingleKeyAccountMissing) {
-			return respondCode(req, http.StatusNotFound, "account_not_found", "account not found")
+			return byok.RespondCode(req, http.StatusNotFound, "account_not_found", "account not found")
 		}
 		return nil, err
 	}

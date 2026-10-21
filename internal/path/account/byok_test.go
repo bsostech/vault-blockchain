@@ -609,7 +609,7 @@ func TestExportBYOKRejects(t *testing.T) {
 		}
 	})
 	t.Run("kid too long", func(t *testing.T) {
-		resp := send("alice", map[string]interface{}{"kid": strings.Repeat("k", maxKIDLength+1), "kek_public_key_pem": kek["public_key_pem"]})
+		resp := send("alice", map[string]interface{}{"kid": strings.Repeat("k", byok.MaxKIDLength+1), "kek_public_key_pem": kek["public_key_pem"]})
 		if resp == nil || !resp.IsError() {
 			t.Fatalf("got %#v", resp)
 		}
