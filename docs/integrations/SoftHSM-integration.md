@@ -34,3 +34,7 @@ pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so -M   # lists RSA-PKCS-OAEP 
 - Unwrapping the private key: do not set `CKA_EC_PARAMS` (`CKR_ATTRIBUTE_READ_ONLY`).
 - No policy needs to be configured: an extractable private key can be wrapped directly.
 - The wrapped private key that SoftHSM2 produces is PKCS#8 without the public key (72 bytes after AES-KWP). vault-blockchain imports it as is.
+
+## HD Wallet Seeds
+
+SoftHSM2 has no BIP-32 mechanisms. It can unwrap a seed exported with `byok/export/wallet/:wallet_id` and store it as a generic secret ([HD Wallet Seed](README.md#hd-wallet-seed)), which is useful to check the wrapping format, but it cannot derive the wallet's accounts or sign with them. As for the AES key, leave `CKA_VALUE_LEN` out of the seed's unwrap template.
