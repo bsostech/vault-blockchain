@@ -37,6 +37,7 @@ func Paths(walletMu *sync.Map) []*framework.Path {
 		pathWalletSignEIP712(),
 		pathWalletEncrypt(),
 		pathWalletDecrypt(),
+		pathWalletExportBYOK(),
 	}
 }
 
