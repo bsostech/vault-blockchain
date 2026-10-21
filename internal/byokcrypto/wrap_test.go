@@ -281,6 +281,60 @@ func TestBlobEncodeParse(t *testing.T) {
 	}
 }
 
+// TestBlobKeyType verifies key_type is omitted when empty and round trips when set.
+func TestBlobKeyType(t *testing.T) {
+	t.Parallel()
+	kek := mustRSA(t, 2048)
+	_, _, blob := wrapTestKey(t, kek)
+
+	enc, err := blob.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := base64.StdEncoding.DecodeString(enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "key_type") {
+		t.Fatalf("empty key_type must be omitted: %s", raw)
+	}
+	got, err := ParseBlob(enc)
+	if err != nil || got.KeyType != "" {
+		t.Fatalf("parse without key_type: %v %+v", err, got)
+	}
+
+	blob.KeyType = KeyTypeBIP39Seed
+	enc, err = blob.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = ParseBlob(enc)
+	if err != nil || got.KeyType != KeyTypeBIP39Seed {
+		t.Fatalf("parse with key_type: %v %+v", err, got)
+	}
+}
+
+// TestWrapUnwrapSeed verifies a raw 64-byte seed round trips like a PKCS#8 key.
+func TestWrapUnwrapSeed(t *testing.T) {
+	t.Parallel()
+	kek := mustRSA(t, 2048)
+	seed := make([]byte, 64)
+	if _, err := rand.Read(seed); err != nil {
+		t.Fatal(err)
+	}
+	blob, err := WrapKey(&kek.PublicKey, "kid", seed, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := UnwrapKey(kek, blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, seed) {
+		t.Fatal("seed changed in round trip")
+	}
+}
+
 // TestParseBlobRejects verifies each fixed field is enforced.
 func TestParseBlobRejects(t *testing.T) {
 	t.Parallel()
