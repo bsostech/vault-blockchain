@@ -151,8 +151,8 @@ func WrapKey(kek *rsa.PublicKey, kid string, plaintext []byte, generator string)
 }
 
 // UnwrapKey recovers the wrapped plaintext (a PKCS#8 private key unless blob.KeyType says otherwise) from
-// blob using kek. The returned bytes must be zeroed by
-// the caller. Wrong key, wrong OAEP parameters, and tampered data all return ErrUnwrapFailed.
+// blob using kek. The returned bytes must be zeroed by the caller. Wrong key, wrong OAEP parameters, and
+// tampered data all return ErrUnwrapFailed.
 func UnwrapKey(kek *rsa.PrivateKey, blob *Blob) ([]byte, error) {
 	ct, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(blob.Ciphertext, "="))
 	if err != nil {
