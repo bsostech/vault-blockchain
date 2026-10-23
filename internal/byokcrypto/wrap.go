@@ -150,7 +150,7 @@ func UnwrapKey(kek *rsa.PrivateKey, blob *Blob) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: ciphertext is not base64url", ErrInvalidBlob)
 	}
-	k := kek.PublicKey.Size()
+	k := kek.Size()
 	// RSA part is exactly one modulus; the AES-KWP part is at least 16 bytes and a multiple of 8.
 	if len(ct) < k+16 || (len(ct)-k)%8 != 0 {
 		return nil, fmt.Errorf("%w: ciphertext length does not match the kek", ErrInvalidBlob)

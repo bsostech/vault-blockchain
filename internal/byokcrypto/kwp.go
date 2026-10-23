@@ -89,7 +89,7 @@ func KWPUnwrap(kek, ciphertext []byte) ([]byte, error) {
 
 	// Every check is evaluated before deciding, so failure modes are not distinguishable by timing.
 	ok := subtle.ConstantTimeCompare(buf[:4], kwpAIV[:])
-	if !(mli > padded-8 && mli <= padded) {
+	if mli <= padded-8 || mli > padded {
 		ok = 0
 	}
 	// mli is only used as an index if it is in range, so clamp it for the padding check.

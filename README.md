@@ -419,6 +419,17 @@ It works in both directions, and the blob format is the same for both:
 
 The format follows the [Azure Key Vault BYOK specification](https://learn.microsoft.com/azure/key-vault/keys/byok-specification), so tools that already produce Azure `.byok` files for a secp256k1 key can feed vault-blockchain.
 
+### Supported HSMs
+
+These HSMs were tested in both directions with KEKs of 2048, 3072, and 4096 bits. The guides list the PKCS#11 call sequence, the templates, and what is specific to each HSM.
+
+| HSM | Guide |
+| --- | ----- |
+| Thales Luna HSM 7 | [docs/integrations/LunaHSM-integration.md](docs/integrations/LunaHSM-integration.md) |
+| SoftHSM2 | [docs/integrations/SoftHSM-integration.md](docs/integrations/SoftHSM-integration.md) |
+
+Other PKCS#11 HSMs follow the same steps; see [docs/integrations](docs/integrations/README.md).
+
 ### Transfer Format
 
 A `.byok` file is JSON:
