@@ -7,7 +7,7 @@ These guides show how a PKCS#11 HSM exchanges secp256k1 keys with vault-blockcha
 | Thales Luna HSM 7 | Supported | Supported | [LunaHSM-integration.md](LunaHSM-integration.md) |
 | SoftHSM2 | Supported | Supported | [SoftHSM-integration.md](SoftHSM-integration.md) |
 
-Both HSMs were tested with KEKs of 2048, 3072, and 4096 bits. On Luna, HSM → vault-blockchain needs a partition in Key Export mode; see [Which Directions a Partition Supports](LunaHSM-integration.md#which-directions-a-partition-supports). Other PKCS#11 HSMs follow the same steps; what usually differs is the AES-KWP mechanism code, which template attributes the token accepts, and its key export policy. See [Other HSMs](#other-hsms).
+Both HSMs were tested with KEKs of 2048, 3072, and 4096 bits. The table covers account keys; for HD wallet seeds see [HD Wallet Seed](#hd-wallet-seed). On Luna, HSM → vault-blockchain needs a partition in Key Export mode; see [Which Directions a Partition Supports](LunaHSM-integration.md#which-directions-a-partition-supports). Other PKCS#11 HSMs follow the same steps; what usually differs is the AES-KWP mechanism code, which template attributes the token accepts, and its key export policy. See [Other HSMs](#other-hsms).
 
 This page covers what is common to every HSM: the call sequence, the templates, and the format conversions. The vendor guides only list what is specific to each HSM.
 
@@ -126,6 +126,37 @@ Use one KEK per transfer and delete it afterwards. Both sides should compute the
 
 Export copies the key: the account in vault-blockchain is unchanged.
 
+### HD Wallet Seed
+
+`byok/export/wallet/:wallet_id` sends the BIP-39 seed of an HD wallet instead of a single account key. The steps are the same as above, with these differences:
+
+- Step 3 calls `byok/export/wallet/<wallet_id>` instead of `byok/export/account/<name>`. The blob carries `"key_type": "bip39-seed"`.
+- The plaintext is the raw 64-byte seed (`PBKDF2-HMAC-SHA512` of the mnemonic, salt `"mnemonic"`, 2048 iterations), not PKCS#8. After AES-KWP it is 72 bytes. The mnemonic is never exported.
+- Step 5.2 unwraps it as a generic secret:
+
+  ```text
+  2. C_UnwrapKey(<KWP>, hAES, kwp_part.bin) → hSeed
+       CKA_CLASS=CKO_SECRET_KEY  CKA_KEY_TYPE=CKK_GENERIC_SECRET  CKA_TOKEN=true
+       CKA_LABEL=<label>  CKA_ID=<id>  CKA_VALUE_LEN=64
+       CKA_SENSITIVE=true  CKA_EXTRACTABLE=false  CKA_DERIVE=true
+  ```
+
+  Use `CKA_TOKEN=true` to keep the seed, since it is the root of every account of the wallet; `CKA_TOKEN=false` is enough to test the transfer. Some tokens set `CKA_VALUE_LEN` themselves and reject it in the template (see the vendor guide). `CKA_DERIVE=true` is what lets the seed be used for BIP-32.
+
+The seed on its own does not sign anything. To use the wallet, the HSM must derive keys from it with BIP-32:
+
+1. Derive the BIP-32 master key from the seed (HMAC-SHA512 with the key `"Bitcoin seed"`).
+2. Derive the account key at `m/44'/60'/0'/0/<index>`, the path vault-blockchain uses. The first three levels are hardened (index `| 0x80000000`).
+3. Read the public key of the derived key, compute its address ([Public Key and Address](#public-key-and-address)), and compare it with vault-blockchain's address for the same index:
+
+   ```bash
+   curl -s -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/blockchain/wallets/alice/accounts/0" | jq -r .data.address
+   ```
+
+4. Sign a 32-byte digest with the derived key and verify it as in step 6 above.
+
+BIP-32 is not part of standard PKCS#11; HSMs that support it do so with vendor mechanisms (see the vendor guides). An HSM without BIP-32 can still unwrap and store the seed, which is enough to check the wrapping format, but it cannot derive or sign with the wallet's accounts.
+
 ## Format Conversions
 
 The commands need OpenSSL 3, `jq`, and `xxd`.
@@ -158,7 +189,7 @@ openssl rsa -RSAPublicKey_in -inform DER -in rsapub.der -pubout -out kek_pub.pem
 openssl pkey -pubin -in kek_pub.pem -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1
 ```
 
-`byok/export/account/:name` accepts both `PUBLIC KEY` (SubjectPublicKeyInfo) and `RSA PUBLIC KEY` (PKCS#1) PEM.
+`byok/export/account/:name` and `byok/export/wallet/:wallet_id` accept both `PUBLIC KEY` (SubjectPublicKeyInfo) and `RSA PUBLIC KEY` (PKCS#1) PEM.
 
 ### Private Key Encoding
 

@@ -64,12 +64,18 @@ type Header struct {
 	Enc string `json:"enc"`
 }
 
+// KeyTypeBIP39Seed marks a blob whose plaintext is a raw 64-byte BIP-39 seed rather than a PKCS#8 key.
+const KeyTypeBIP39Seed = "bip39-seed"
+
 // Blob is the .byok key transfer blob.
 type Blob struct {
 	SchemaVersion string `json:"schema_version"`
 	Header        Header `json:"header"`
 	Ciphertext    string `json:"ciphertext"` // base64url, no padding
 	Generator     string `json:"generator,omitempty"`
+	// KeyType names the plaintext format when it is not a PKCS#8 private key (for example KeyTypeBIP39Seed).
+	// It is not part of the Azure format and is omitted for PKCS#8 blobs.
+	KeyType string `json:"key_type,omitempty"`
 }
 
 // ValidKEKSize reports whether bits is a supported KEK RSA modulus size.
@@ -111,10 +117,11 @@ func ParseKEKPublicKeyPEM(s string) (*rsa.PublicKey, error) {
 	return pub, nil
 }
 
-// WrapKey wraps pkcs8 (a PKCS#8 private key) for the holder of kek and returns the .byok blob.
-// A fresh AES-256 key wraps the private key with AES-KWP, and kek wraps that AES key with
-// RSA-OAEP (SHA-1, MGF1-SHA1, empty label). The ciphertext is the RSA part followed by the AES part.
-func WrapKey(kek *rsa.PublicKey, kid string, pkcs8 []byte, generator string) (*Blob, error) {
+// WrapKey wraps plaintext key material (a PKCS#8 private key, or a raw seed) for the holder of kek and
+// returns the .byok blob. A fresh AES-256 key wraps the plaintext with AES-KWP, and kek wraps that AES key
+// with RSA-OAEP (SHA-1, MGF1-SHA1, empty label). The ciphertext is the RSA part followed by the AES part.
+// The caller sets Blob.KeyType when the plaintext is not PKCS#8.
+func WrapKey(kek *rsa.PublicKey, kid string, plaintext []byte, generator string) (*Blob, error) {
 	if kek == nil || !ValidKEKSize(kek.N.BitLen()) {
 		return nil, ErrInvalidKEKPublicKey
 	}
@@ -126,7 +133,7 @@ func WrapKey(kek *rsa.PublicKey, kid string, pkcs8 []byte, generator string) (*B
 	if _, err := rand.Read(aesKey); err != nil {
 		return nil, fmt.Errorf("generate aes key: %w", err)
 	}
-	wrappedKey, err := KWPWrap(aesKey, pkcs8)
+	wrappedKey, err := KWPWrap(aesKey, plaintext)
 	if err != nil {
 		return nil, err
 	}
@@ -143,8 +150,9 @@ func WrapKey(kek *rsa.PublicKey, kid string, pkcs8 []byte, generator string) (*B
 	}, nil
 }
 
-// UnwrapKey recovers the PKCS#8 private key from blob using kek. The returned bytes must be zeroed by
-// the caller. Wrong key, wrong OAEP parameters, and tampered data all return ErrUnwrapFailed.
+// UnwrapKey recovers the wrapped plaintext (a PKCS#8 private key unless blob.KeyType says otherwise) from
+// blob using kek. The returned bytes must be zeroed by the caller. Wrong key, wrong OAEP parameters, and
+// tampered data all return ErrUnwrapFailed.
 func UnwrapKey(kek *rsa.PrivateKey, blob *Blob) ([]byte, error) {
 	ct, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(blob.Ciphertext, "="))
 	if err != nil {

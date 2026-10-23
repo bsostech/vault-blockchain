@@ -61,3 +61,25 @@ Read this before turning on policy 1 (see Thales, *Configuring the Partition for
 | Key Export (policy 1 on) | Supported | Supported |
 
 Production deployments usually keep Cloning mode, for example to replicate keys across several HSMs in a high-availability group. On such partitions, plan for vault-blockchain → HSM only: create or import the keys in vault-blockchain and export them to the HSM.
+
+## HD Wallets (BIP-32)
+
+A wallet seed exported with `byok/export/wallet/:wallet_id` is unwrapped as a 64-byte generic secret, as in [HD Wallet Seed](README.md#hd-wallet-seed). Luna can then derive the wallet's accounts with its vendor BIP-32 mechanisms:
+
+| Purpose | Mechanism |
+| ------- | --------- |
+| Seed → BIP-32 master key pair | `CKM_BIP32_MASTER_DERIVE` = `0x80000E00` |
+| Master or parent key → child key pair | `CKM_BIP32_CHILD_DERIVE` = `0x80000E01` |
+
+The derived keys have the vendor key type `CKK_BIP32`. The parameter structures (`CK_BIP32_MASTER_DERIVE_PARAMS`, `CK_BIP32_CHILD_DERIVE_PARAMS`) are defined in the Luna SDK headers; each call takes a public and a private key template and returns both handles.
+
+1. Unwrap the seed with `CKA_KEY_TYPE=CKK_GENERIC_SECRET` and `CKA_DERIVE=true` (`hSeed`).
+2. `C_DeriveKey(CKM_BIP32_MASTER_DERIVE, hSeed)` → master public and private key. Give the private key `CKA_DERIVE=true` so that children can be derived from it.
+3. `C_DeriveKey(CKM_BIP32_CHILD_DERIVE, hMasterPriv)` with the path `44'/60'/0'/0/<index>`, that is `{0x8000002C, 0x8000003C, 0x80000000, 0, <index>}`. Hardened indices carry the `0x80000000` flag. The whole path can be given in one call. Give the derived private key `CKA_SIGN=true`.
+4. Compute the address from the derived public key ([Public Key and Address](README.md#public-key-and-address)) and compare it with vault-blockchain's `wallets/:wallet_id/accounts/<index>`.
+5. Sign a 32-byte digest with `CKM_ECDSA` and the derived private key, and verify it with that public key ([Signatures](README.md#signatures)).
+
+Requirements:
+
+- BIP-32 is not a FIPS-approved algorithm, so the HSM must be configured to allow non-FIPS algorithms. This is an HSM-wide setting made by the HSM Security Officer; check the HSM policies with `hsm showpolicies` before planning on it.
+- Receiving the seed is an unwrap of secret keys only (the AES key and the seed), which needs policy 6 but neither policy 1 nor 2. It should therefore also work on a partition in Cloning mode. This has not been verified on hardware yet.
