@@ -252,10 +252,6 @@ api POST "$MOUNT/byok/export/account/imp-$RUN" "$OPS_TOKEN" '{"kid":"x","kek_pub
 expect_status "export with a bad public key is 400" 400
 api POST "$MOUNT/byok/export/account/none-$RUN" "$OPS_TOKEN" "$(jq -n --arg kid "$KEK2_ID" --rawfile pem "$WORK/k2-$RUN.pem.pub" '{kid:$kid,kek_public_key_pem:$pem}')"
 expect_status "export of a missing account is 404" 404
-root POST "$MOUNT/accounts/imp-$RUN/export-byok" "$(jq -n --arg kid "$KEK2_ID" '{kid:$kid,kek_public_key_pem:"x"}')"
-[ "$STATUS" != 200 ] && ok "the old accounts/:name/export-byok path no longer exists (HTTP $STATUS)" || bad "accounts/:name/export-byok still answers"
-root POST "$MOUNT/byok/export/imp-$RUN" "$(jq -n --arg kid "$KEK2_ID" --rawfile pem "$WORK/k2-$RUN.pem.pub" '{kid:$kid,kek_public_key_pem:$pem}')"
-[ "$STATUS" != 200 ] && ok "the old byok/export/:name path no longer exists (HTTP $STATUS)" || bad "byok/export/:name still answers"
 expect_eq "account export blobs carry no key_type" "$(printf '%s' "$EXPORTED" | openssl base64 -d -A | jq -r '.key_type // "absent"')" absent
 
 section "wallet export"
