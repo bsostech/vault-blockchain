@@ -15,6 +15,6 @@ path "blockchain/accounts/+/import-byok" {
     capabilities = [ "create", "update" ]
 }
 
-path "blockchain/byok/export/+" {
+path "blockchain/byok/export/account/+" {
     capabilities = [ "update" ]
 }

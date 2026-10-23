@@ -66,14 +66,14 @@ func pathSingleKeyImportBYOK() *framework.Path {
 	}
 }
 
-// pathSingleKeyExportBYOK registers byok/export/:name for exporting an account key wrapped as a .byok blob.
+// pathSingleKeyExportBYOK registers byok/export/account/:name for exporting an account key wrapped as a .byok blob.
 //
 // It deliberately lives outside accounts/: the user policy grants accounts/<entity>/*, and a path under it
 // would hand every user a way to take their own private key out. Policies that do not name byok/export/
 // never match it.
 func pathSingleKeyExportBYOK() *framework.Path {
 	return &framework.Path{
-		Pattern:      "byok/export/" + framework.GenericNameRegex("name"),
+		Pattern:      "byok/export/account/" + framework.GenericNameRegex("name"),
 		HelpSynopsis: "Export an account private key wrapped for another party's key exchange key (KEK).",
 		HelpDescription: "Wraps the account's private key for the given RSA public key and returns a .byok blob. " +
 			"The account is not changed. Only the holder of the matching KEK private key can unwrap it, " +

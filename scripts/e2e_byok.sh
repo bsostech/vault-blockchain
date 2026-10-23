@@ -201,7 +201,7 @@ expect_status "a blob for the old KEK is refused by the new one" 404
 section "export and re-import"
 create_kek "k2-$RUN"
 KEK2_ID="$KID"
-api POST "$MOUNT/byok/export/imp-$RUN" "$OPS_TOKEN" "$(jq -n --arg kid "$KEK2_ID" --rawfile pem "$WORK/k2-$RUN.pem.pub" '{kid:$kid,kek_public_key_pem:$pem}')"
+api POST "$MOUNT/byok/export/account/imp-$RUN" "$OPS_TOKEN" "$(jq -n --arg kid "$KEK2_ID" --rawfile pem "$WORK/k2-$RUN.pem.pub" '{kid:$kid,kek_public_key_pem:$pem}')"
 expect_status "operator exports an account" 200
 EXPORTED="$(printf '%s' "$BODY" | jq -r .data.byok_blob)"
 expect_eq "export reports the account address" "$(printf '%s' "$BODY" | jq -r .data.address)" "$ADDR_A"
@@ -210,21 +210,23 @@ expect_eq "export fingerprint equals the SHA-256 of the DER public key" "$(print
 api POST "$MOUNT/accounts/back-$RUN/import-byok" "$OPS_TOKEN" "$(jq -n --arg b "$EXPORTED" '{byok_blob:$b}')"
 expect_status "the exported blob imports under another name" 200
 expect_eq "re-imported account has the same public key" "$(printf '%s' "$BODY" | jq -r .data.public_key)" "$PUB_A"
-api POST "$MOUNT/byok/export/imp-$RUN" "$OPS_TOKEN" '{"kid":"x","kek_public_key_pem":"not pem"}'
+api POST "$MOUNT/byok/export/account/imp-$RUN" "$OPS_TOKEN" '{"kid":"x","kek_public_key_pem":"not pem"}'
 expect_status "export with a bad public key is 400" 400
-api POST "$MOUNT/byok/export/none-$RUN" "$OPS_TOKEN" "$(jq -n --arg kid "$KEK2_ID" --rawfile pem "$WORK/k2-$RUN.pem.pub" '{kid:$kid,kek_public_key_pem:$pem}')"
+api POST "$MOUNT/byok/export/account/none-$RUN" "$OPS_TOKEN" "$(jq -n --arg kid "$KEK2_ID" --rawfile pem "$WORK/k2-$RUN.pem.pub" '{kid:$kid,kek_public_key_pem:$pem}')"
 expect_status "export of a missing account is 404" 404
 root POST "$MOUNT/accounts/imp-$RUN/export-byok" "$(jq -n --arg kid "$KEK2_ID" '{kid:$kid,kek_public_key_pem:"x"}')"
 [ "$STATUS" != 200 ] && ok "the old accounts/:name/export-byok path no longer exists (HTTP $STATUS)" || bad "accounts/:name/export-byok still answers"
+root POST "$MOUNT/byok/export/imp-$RUN" "$(jq -n --arg kid "$KEK2_ID" --rawfile pem "$WORK/k2-$RUN.pem.pub" '{kid:$kid,kek_public_key_pem:$pem}')"
+[ "$STATUS" != 200 ] && ok "the old byok/export/:name path no longer exists (HTTP $STATUS)" || bad "byok/export/:name still answers"
 
 section "policies: users"
 api POST "$MOUNT/accounts/$ALICE/address" "$ALICE_TOKEN"
 expect_status "user creates their own account" 200
 api POST "$MOUNT/accounts/$ALICE/sign" "$ALICE_TOKEN" '{"data":"0x68656c6c6f"}'
 expect_status "user signs with their own account" 200
-api POST "$MOUNT/byok/export/$ALICE" "$ALICE_TOKEN" "$(jq -n --arg kid "$KEK2_ID" --rawfile pem "$WORK/k2-$RUN.pem.pub" '{kid:$kid,kek_public_key_pem:$pem}')"
+api POST "$MOUNT/byok/export/account/$ALICE" "$ALICE_TOKEN" "$(jq -n --arg kid "$KEK2_ID" --rawfile pem "$WORK/k2-$RUN.pem.pub" '{kid:$kid,kek_public_key_pem:$pem}')"
 expect_status "user cannot export their own account" 403
-api POST "$MOUNT/byok/export/imp-$RUN" "$ALICE_TOKEN" "$(jq -n --arg kid "$KEK2_ID" --rawfile pem "$WORK/k2-$RUN.pem.pub" '{kid:$kid,kek_public_key_pem:$pem}')"
+api POST "$MOUNT/byok/export/account/imp-$RUN" "$ALICE_TOKEN" "$(jq -n --arg kid "$KEK2_ID" --rawfile pem "$WORK/k2-$RUN.pem.pub" '{kid:$kid,kek_public_key_pem:$pem}')"
 expect_status "user cannot export someone else's account" 403
 api POST "$MOUNT/byok/keks/u-$RUN" "$ALICE_TOKEN" '{"key_size":2048}'
 expect_status "user cannot create a KEK" 403

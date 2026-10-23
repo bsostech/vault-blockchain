@@ -415,7 +415,7 @@ It works in both directions, and the blob format is the same for both:
 | Direction | Receiving side | Sending side |
 | --------- | -------------- | ------------ |
 | Other store → vault-blockchain | `byok/keks` (create KEK) then `accounts/:name/import-byok` | the other store |
-| vault-blockchain → other store | the other store | `byok/export/:name` |
+| vault-blockchain → other store | the other store | `byok/export/account/:name` |
 
 The format follows the [Azure Key Vault BYOK specification](https://learn.microsoft.com/azure/key-vault/keys/byok-specification), so tools that already produce Azure `.byok` files for a secp256k1 key can feed vault-blockchain.
 
@@ -506,7 +506,7 @@ The account behaves like one created with `accounts/:name/import`: it can sign, 
 
 ### Export
 
-##### `POST blockchain/byok/export/:name`
+##### `POST blockchain/byok/export/account/:name`
 
 * `name` `(string: <required>)` - Name of the account to export, in the path.
 * `kid` `(string: <required>)` - Identifier of the receiving KEK, written to the blob header.
@@ -566,10 +566,10 @@ curl -s -X POST -H "X-Vault-Token: $VAULT_TOKEN" \
 curl -s -X DELETE -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/blockchain/byok/keks/transfer1"
 ```
 
-To send a key the other way, create a KEK on the receiving side, then call `export-byok` with its `kid` and public key PEM:
+To send a key the other way, create a KEK on the receiving side, then call `byok/export/account/:name` with its `kid` and public key PEM:
 
 ```bash
 curl -s -X POST -H "X-Vault-Token: $VAULT_TOKEN" \
   --data "$(jq -n --arg kid "$KID" --rawfile pem kek_pub.pem '{kid: $kid, kek_public_key_pem: $pem}')" \
-  "$VAULT_ADDR/v1/blockchain/byok/export/alice" | jq -r .data.byok_blob | base64 -d > alice.byok
+  "$VAULT_ADDR/v1/blockchain/byok/export/account/alice" | jq -r .data.byok_blob | base64 -d > alice.byok
 ```
