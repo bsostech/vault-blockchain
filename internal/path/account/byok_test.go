@@ -18,6 +18,7 @@
 package account
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -193,6 +194,28 @@ func requireNoSecrets(t *testing.T, resp *logical.Response, key *ecdsa.PrivateKe
 		if strings.Contains(k, "private") {
 			t.Fatalf("response has private field %q", k)
 		}
+	}
+}
+
+// requireNotInBlob fails if the plaintext secret, raw or hex encoded, appears in the decoded .byok JSON
+// or in the decoded ciphertext. Comparing against the encoded blob would never match.
+func requireNotInBlob(t *testing.T, b64 string, secret []byte) {
+	t.Helper()
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, err := byokcrypto.ParseBlob(b64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, err := base64.RawURLEncoding.DecodeString(blob.Ciphertext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hexSecret := []byte(hex.EncodeToString(secret))
+	if bytes.Contains(raw, secret) || bytes.Contains(bytes.ToLower(raw), hexSecret) || bytes.Contains(ct, secret) {
+		t.Fatal("blob contains the secret in the clear")
 	}
 }
 
@@ -507,9 +530,7 @@ func TestExportBYOK(t *testing.T) {
 	if resp.Data["kek_public_key_sha256"] != kek["public_key_sha256"] {
 		t.Fatalf("fingerprint=%v want %v", resp.Data["kek_public_key_sha256"], kek["public_key_sha256"])
 	}
-	if strings.Contains(resp.Data["byok_blob"].(string), keyHex(key)) {
-		t.Fatal("blob contains the private key in the clear")
-	}
+	requireNotInBlob(t, resp.Data["byok_blob"].(string), crypto.FromECDSA(key))
 
 	blob, err := byokcrypto.ParseBlob(resp.Data["byok_blob"].(string))
 	if err != nil {

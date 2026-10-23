@@ -192,6 +192,28 @@ func pemOfPublicKey(t *testing.T, pub interface{}) string {
 
 // TestWalletExportBYOK_roundTrip verifies the exported seed unwraps to the wallet's BIP-39 seed and derives
 // every stored account address.
+// requireNotInBlob fails if the plaintext secret, raw or hex encoded, appears in the decoded .byok JSON
+// or in the decoded ciphertext. Comparing against the encoded blob would never match.
+func requireNotInBlob(t *testing.T, b64 string, secret []byte) {
+	t.Helper()
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, err := byokcrypto.ParseBlob(b64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, err := base64.RawURLEncoding.DecodeString(blob.Ciphertext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hexSecret := []byte(hex.EncodeToString(secret))
+	if bytes.Contains(raw, secret) || bytes.Contains(bytes.ToLower(raw), hexSecret) || bytes.Contains(ct, secret) {
+		t.Fatal("blob contains the secret in the clear")
+	}
+}
+
 func TestWalletExportBYOK_roundTrip(t *testing.T) {
 	t.Parallel()
 	e := newWalletBYOKEnv(t)
@@ -217,9 +239,7 @@ func TestWalletExportBYOK_roundTrip(t *testing.T) {
 
 	want := bip39.NewSeed(testMnemonic, "")
 	encoded := resp.Data["byok_blob"].(string)
-	if strings.Contains(encoded, hex.EncodeToString(want)) {
-		t.Fatal("blob contains the seed in the clear")
-	}
+	requireNotInBlob(t, encoded, want)
 	blob, err := byokcrypto.ParseBlob(encoded)
 	if err != nil {
 		t.Fatal(err)
