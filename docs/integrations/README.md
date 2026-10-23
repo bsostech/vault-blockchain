@@ -234,6 +234,9 @@ printf %s "$EC_POINT_HEX" | tail -c 128 | xxd -r -p | openssl dgst -keccak-256 -
 | `invalid_blob` | `byok_blob` is not standard Base64, `ciphertext` is not base64url, a fixed header field is wrong, or the ciphertext length does not fit the KEK (often a truncated base64url decode). |
 | `unwrap_failed` | Wrong OAEP hash (for example SHA-256), the two parts swapped, a different KEK, or an AES key wrap that is not RFC 5649. The cause is deliberately not distinguished. |
 | `kek_not_found` | The `kid` is not the one vault-blockchain returned, or the KEK was deleted or recreated. |
+| `kek_expired` | The KEK is past the `ttl` it was created with. Create a new KEK and wrap again. |
+| `account_exists` | `import-byok` never overwrites; the account name is already taken. |
+| `invalid_kek_public_key` | On export: the PEM is not an RSA public key of 2048, 3072, or 4096 bits, often a wrong modulus or exponent in the conversion ([KEK Public Key](#kek-public-key)). |
 | `invalid_key`, `unsupported_curve` | See [Private Key Encoding](#private-key-encoding). |
 
 ## Other HSMs

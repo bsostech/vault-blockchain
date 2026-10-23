@@ -126,7 +126,7 @@ func (e *byokEnv) importBYOK(name, blob string) *logical.Response {
 	return e.do(logical.CreateOperation, "accounts/"+name+"/import-byok", map[string]interface{}{"byok_blob": blob})
 }
 
-// exportBYOK sends an export-byok write for the account, wrapping for kek.
+// exportBYOK sends a byok/export/account write for the account, wrapping for kek.
 func (e *byokEnv) exportBYOK(name string, kek map[string]interface{}) *logical.Response {
 	e.t.Helper()
 	return e.do(logical.UpdateOperation, "byok/export/account/"+name, map[string]interface{}{
@@ -544,7 +544,7 @@ func TestExportBYOK(t *testing.T) {
 	}
 }
 
-// TestExportImportRoundTrip verifies export-byok output imports with import-byok to an account with the same key.
+// TestExportImportRoundTrip verifies byok/export/account output imports with import-byok to an account with the same key.
 func TestExportImportRoundTrip(t *testing.T) {
 	t.Parallel()
 	e := newBYOKEnv(t)
@@ -663,7 +663,7 @@ func mustP256(t *testing.T) *ecdsa.PrivateKey {
 func TestExportPathOutsideAccounts(t *testing.T) {
 	t.Parallel()
 	for _, p := range Paths() {
-		if strings.Contains(p.Pattern, "export-byok") || strings.HasPrefix(p.Pattern, "accounts/") && strings.Contains(p.Pattern, "export") {
+		if strings.HasPrefix(p.Pattern, "accounts/") && strings.Contains(p.Pattern, "export") {
 			t.Fatalf("export path %q is under accounts/", p.Pattern)
 		}
 	}
