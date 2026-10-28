@@ -27,6 +27,7 @@ The Luna Client must be installed and registered with the HSM (`/etc/Chrystoki.c
 - Unwrapping the private key: do not set `CKA_EC_PARAMS` (`CKR_ATTRIBUTE_TYPE_INVALID`). The curve comes from the PKCS#8 data.
 - Unwrapping the AES key: `CKA_VALUE_LEN=32` may be set or left out.
 - `CKA_TRUSTED` is not needed on the KEK public key.
+- An unwrapped private key exposes `CKA_EC_POINT`, so an application can read its address without a separate public key object.
 - The wrapped private key that Luna produces is PKCS#8 without the public key (72 bytes after AES-KWP). vault-blockchain imports it as is.
 
 ## Partition Policies
@@ -78,6 +79,8 @@ The derived keys have the vendor key type `CKK_BIP32`. The parameter structures 
 3. `C_DeriveKey(CKM_BIP32_CHILD_DERIVE, hMasterPriv)` with the path `44'/60'/0'/0/<index>`, that is `{0x8000002C, 0x8000003C, 0x80000000, 0, <index>}`. Hardened indices carry the `0x80000000` flag. The whole path can be given in one call. Give the derived private key `CKA_SIGN=true`.
 4. Compute the address from the derived public key ([Public Key and Address](README.md#public-key-and-address)) and compare it with vault-blockchain's `wallets/:wallet_id/accounts/<index>`.
 5. Sign a 32-byte digest with `CKM_ECDSA` and the derived private key, and verify it with that public key ([Signatures](README.md#signatures)).
+
+This sequence has been run on a Luna HSM 7 partition in Key Export mode: the accounts derived in the HSM sign for the same addresses as vault-blockchain's.
 
 Requirements:
 

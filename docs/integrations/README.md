@@ -124,6 +124,17 @@ Use one KEK per transfer and delete it afterwards. Both sides should compute the
 
 6. Sign a 32-byte digest in the HSM with `CKM_ECDSA` and verify it with the account's public key ([Signatures](#signatures)).
 
+7. If the key is kept (`CKA_TOKEN=true`) for an application that finds it by `CKA_LABEL` and reads its address from `CKA_EC_POINT`, check that the attribute can be read. `C_UnwrapKey` creates only the private key, and some tokens do not expose `CKA_EC_POINT` on an unwrapped private key (see the vendor guides). In that case, create a public key object with the same label:
+
+   ```text
+   C_CreateObject → hECPub
+     CKA_CLASS=CKO_PUBLIC_KEY  CKA_KEY_TYPE=CKK_EC  CKA_TOKEN=true  CKA_VERIFY=true
+     CKA_LABEL=<label of the private key>  CKA_EC_PARAMS=<secp256k1 OID 06 05 2B 81 04 00 0A>
+     CKA_EC_POINT=<DER OCTET STRING of the account's uncompressed public key, 04 41 04 || X || Y>
+   ```
+
+   `GET accounts/:name/address` returns the account's public key as `public_key`: X || Y in hex (128 characters, without the `04` prefix), so `CKA_EC_POINT` is `044104` followed by that value.
+
 Export copies the key: the account in vault-blockchain is unchanged.
 
 ### HD Wallet Seed
