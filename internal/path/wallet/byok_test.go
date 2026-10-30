@@ -45,20 +45,23 @@ import (
 	"github.com/bsostech/vault-blockchain/internal/path/byok"
 )
 
-// walletBYOKEnv is a framework backend serving wallet and byok paths over in-memory storage.
+// walletBYOKEnv is a framework backend serving wallet paths over in-memory storage. keks holds the private
+// halves of the receiving KEKs a test created, standing in for the HSM that unwraps the export.
 type walletBYOKEnv struct {
-	t *testing.T
-	b *framework.Backend
-	s logical.Storage
+	t    *testing.T
+	b    *framework.Backend
+	s    logical.Storage
+	keks map[string]*rsa.PrivateKey
 }
 
 func newWalletBYOKEnv(t *testing.T) *walletBYOKEnv {
 	t.Helper()
 	var mu sync.Map
 	return &walletBYOKEnv{
-		t: t,
-		b: &framework.Backend{Paths: append(Paths(&mu), byok.Paths()...)},
-		s: &logical.InmemStorage{},
+		t:    t,
+		b:    &framework.Backend{Paths: Paths(&mu)},
+		s:    &logical.InmemStorage{},
+		keks: map[string]*rsa.PrivateKey{},
 	}
 }
 
@@ -100,28 +103,23 @@ func (e *walletBYOKEnv) deriveNext(walletID string) string {
 	return addr
 }
 
-// createKEK creates a 2048-bit KEK and returns its create response data.
+// createKEK generates a 2048-bit receiving KEK and returns its kid, public key PEM, and fingerprint.
 func (e *walletBYOKEnv) createKEK(name string) map[string]interface{} {
 	e.t.Helper()
-	resp := e.do(logical.CreateOperation, "byok/keks/"+name, map[string]interface{}{"key_size": 2048})
-	if resp == nil || resp.IsError() {
-		e.t.Fatalf("create kek: %#v", resp)
-	}
-	return resp.Data
-}
-
-// kekPrivateKey loads the RSA private key of a stored KEK.
-func (e *walletBYOKEnv) kekPrivateKey(name string) *rsa.PrivateKey {
-	e.t.Helper()
-	k, err := byok.LoadKEK(context.Background(), e.s, name)
-	if err != nil || k == nil {
-		e.t.Fatalf("LoadKEK: %v %v", k, err)
-	}
-	priv, err := k.PrivateKey()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	return priv
+	fp, err := byokcrypto.PublicKeyFingerprint(&priv.PublicKey)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.keks[name] = priv
+	return map[string]interface{}{
+		"kid":               "hsm/keks/" + name,
+		"public_key_pem":    pemOfPublicKey(e.t, &priv.PublicKey),
+		"public_key_sha256": fp,
+	}
 }
 
 // exportWallet sends a wallet export write, wrapping for kek.
@@ -235,7 +233,7 @@ func TestWalletExportBYOK_roundTrip(t *testing.T) {
 		t.Fatalf("blob JSON lacks key_type: %s", raw)
 	}
 
-	seed, err := byokcrypto.UnwrapKey(e.kekPrivateKey("k1"), blob)
+	seed, err := byokcrypto.UnwrapKey(e.keks["k1"], blob)
 	if err != nil {
 		t.Fatal(err)
 	}

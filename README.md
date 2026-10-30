@@ -408,21 +408,20 @@ No parameters.
 
 ## API — BYOK (Bring Your Own Key)
 
-BYOK moves a secp256k1 private key between vault-blockchain and another key store, such as an HSM, without the key ever being in the clear in transit. The receiving side creates a key exchange key (KEK), an RSA key pair whose private half never leaves it. The sending side wraps its private key with the KEK public key and produces a `.byok` blob. Only the receiving side can unwrap it. vault-blockchain can also send the BIP-39 seed of an HD wallet the same way.
+BYOK moves a secp256k1 private key, or the BIP-39 seed of an HD wallet, from vault-blockchain to another key store, such as an HSM, without the key ever being in the clear in transit. The receiving side creates a key exchange key (KEK), an RSA key pair whose private half never leaves it. vault-blockchain wraps the key with the KEK public key and returns a `.byok` blob. Only the receiving side can unwrap it.
 
-It works in both directions, and the blob format is the same for both:
+| What moves | Path | Receiving side |
+| ---------- | ---- | -------------- |
+| secp256k1 private key | `byok/export/account/:name` | the other store |
+| HD wallet BIP-39 seed | `byok/export/wallet/:wallet_id` | the other store; needs BIP-32 to derive accounts |
 
-| Direction | What moves | Receiving side | Sending side |
-| --------- | ---------- | -------------- | ------------ |
-| Other store → vault-blockchain | secp256k1 private key | `byok/keks` (create KEK) then `accounts/:name/import-byok` | the other store |
-| vault-blockchain → other store | secp256k1 private key | the other store | `byok/export/account/:name` |
-| vault-blockchain → other store | HD wallet BIP-39 seed | the other store; needs BIP-32 to derive accounts | `byok/export/wallet/:wallet_id` |
+Keys only move out of vault-blockchain through BYOK. To bring an existing key into vault-blockchain, use `accounts/:name/import` (private key) or `wallets/:wallet_id/import` (mnemonic).
 
-The format follows the [Azure Key Vault BYOK specification](https://learn.microsoft.com/azure/key-vault/keys/byok-specification), so tools that already produce Azure `.byok` files for a secp256k1 key can feed vault-blockchain.
+The format follows the [Azure Key Vault BYOK specification](https://learn.microsoft.com/azure/key-vault/keys/byok-specification).
 
 ### Supported HSMs
 
-These HSMs were tested in both directions with KEKs of 2048, 3072, and 4096 bits. The guides list the PKCS#11 call sequence, the templates, and what is specific to each HSM.
+These HSMs were tested as the receiving side with KEKs of 2048, 3072, and 4096 bits. The guides list the PKCS#11 call sequence, the templates, and what is specific to each HSM.
 
 | HSM | Guide |
 | --- | ----- |
@@ -445,67 +444,13 @@ A `.byok` file is JSON:
 }
 ```
 
-* `kid` is the KEK identifier returned by `byok/keks`.
+* `kid` is the receiving KEK's identifier, chosen by the receiving side and passed to the export call.
 * `ciphertext` is `RSA-OAEP(KEK public key, AES key)` followed by `AES-KWP(AES key, private key)`. The RSA part is exactly as long as the KEK modulus (256 bytes for a 2048-bit KEK), which is how the two parts are split.
 * RSA-OAEP uses SHA-1 for both the hash and MGF1, with an empty label. This is fixed by the Azure format and is what HSMs expect.
-* AES-KWP is AES Key Wrap with Padding (RFC 5649). The AES key may be 128, 192, or 256 bits.
+* AES-KWP is AES Key Wrap with Padding (RFC 5649). vault-blockchain always uses a 256-bit AES key.
 * The wrapped private key is a PKCS#8 `PrivateKeyInfo` (DER) holding an RFC 5915 `ECPrivateKey` on secp256k1 (OID `1.3.132.0.10`).
-* `key_type` is optional and not part of the Azure format. It is absent for a private key. `byok/export/wallet/:wallet_id` sets it to `bip39-seed`; the wrapped value is then the raw 64-byte BIP-39 seed instead of PKCS#8 (see [Wallet Export](#wallet-export)). There is no API to import a seed: `import-byok` takes private keys only.
-* The API takes the whole `.byok` file Base64 encoded (standard alphabet) as `byok_blob`.
-
-### Key Exchange Keys
-
-| Method | Path |
-| ------ | ---- |
-| `LIST` | `blockchain/byok/keks/` |
-| `POST` | `blockchain/byok/keks/:kek_name` — create a KEK. |
-| `GET` | `blockchain/byok/keks/:kek_name` — read the KEK public key and metadata. |
-| `DELETE` | `blockchain/byok/keks/:kek_name` — delete the KEK and its private key. |
-
-A KEK is only used to unwrap imports. There is no API that returns its private key. Create one KEK per transfer and delete it afterwards.
-
-##### `POST blockchain/byok/keks/:kek_name`
-
-* `kek_name` `(string: <required>)` - KEK name in the path.
-* `key_size` `(int: 3072)` - RSA modulus size in bits: `2048`, `3072`, or `4096`.
-* `ttl` `(duration: "")` - Optional lifetime. After it elapses the KEK can no longer be used for imports (HTTP 410).
-
-**Response:**
-
-```json
-{
-  "kid": "blockchain/byok/keks/<kek_name>/<id>",
-  "kek_name": "<kek_name>",
-  "key_size": 3072,
-  "public_key_pem": "-----BEGIN PUBLIC KEY-----\n...",
-  "public_key_sha256": "<hex SHA-256 of the DER public key>",
-  "created_at": "2026-10-05T00:00:00Z",
-  "expires_at": ""
-}
-```
-
-The `<id>` at the end of the `kid` is random per KEK, so a KEK deleted and recreated under the same name does not accept blobs wrapped for the old one. `GET` returns the same fields. A name that already exists returns HTTP 409 (`kek_exists`); a missing KEK on `GET` returns 404; `DELETE` of a missing KEK succeeds.
-
-### Import
-
-##### `POST blockchain/accounts/:name/import-byok`
-
-* `name` `(string: <required>)` - Logical account name in the path. Same namespace as `accounts/:name/import`.
-* `byok_blob` `(string: <required>)` - The `.byok` file, Base64 encoded.
-
-**Response:** `{ "address": "0x...", "public_key": "..." }`
-
-The account behaves like one created with `accounts/:name/import`: it can sign, sign transactions, and use ECIES. The private key is never returned. An existing account is never overwritten.
-
-| HTTP | Error | Cause |
-| ---- | ----- | ----- |
-| 400 | `invalid_blob` | Not Base64 or JSON, wrong `schema_version`, `alg`, or `enc`, or `ciphertext` length does not fit the KEK. |
-| 400 | `unwrap_failed` | The blob could not be unwrapped: wrong KEK, wrong OAEP parameters, or tampered data. The cause is deliberately not distinguished. |
-| 400 | `unsupported_curve` | The wrapped key is not a secp256k1 EC key. |
-| 400 | `invalid_key` | The wrapped key is malformed, zero, or outside the curve order. |
-| 404 | `kek_not_found` | No KEK matches the `kid`. |
-| 409 | `account_exists` | The account name is taken. |
-| 410 | `kek_expired` | The KEK is past its `ttl`. |
+* `key_type` is optional and not part of the Azure format. It is absent for a private key. `byok/export/wallet/:wallet_id` sets it to `bip39-seed`; the wrapped value is then the raw 64-byte BIP-39 seed instead of PKCS#8 (see [Wallet Export](#wallet-export)).
+* The export response returns the whole `.byok` file Base64 encoded (standard alphabet) as `byok_blob`.
 
 ### Export
 
@@ -562,58 +507,15 @@ The seed gives every account of the wallet, those already created and any create
 
 ### End-to-End Check
 
-`scripts/e2e_byok.sh` exercises all of the above against a live Vault over HTTP, including the policies in `configs/`: users are refused `byok/export/` and `byok/keks/`, operators are not. For wallet export it imports a known mnemonic, unwraps the exported blob with OpenSSL using a local RSA key in place of an HSM KEK, and checks the seed against the mnemonic and the wallet's derived addresses. It creates an auth mount, policies, and users, so run it against a throwaway dev server:
+`scripts/e2e_byok.sh` exercises all of the above against a live Vault over HTTP, including the policies in `configs/`: users are refused `byok/export/`, operators are not. It unwraps the exported blobs with OpenSSL using a local RSA key in place of an HSM KEK, and checks the account key against the original and the wallet seed against a known mnemonic and the wallet's derived addresses. It creates an auth mount, policies, and users, so run it against a throwaway dev server:
 
 ```bash
 VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=<root token> bash scripts/e2e_byok.sh
 ```
 
-### Example: Wrapping a Key With OpenSSL
+### Example: Unwrapping an Export With OpenSSL
 
-This produces a `.byok` blob for a key created with OpenSSL, using only standard tools. Any HSM that can perform the same two operations (AES-KWP, then RSA-OAEP with SHA-1) can produce the same blob.
-
-```bash
-# 1. Create a KEK and save its public key and kid.
-curl -s -X POST -H "X-Vault-Token: $VAULT_TOKEN" -d '{"key_size": 2048}' \
-  "$VAULT_ADDR/v1/blockchain/byok/keks/transfer1" > kek.json
-jq -r .data.public_key_pem kek.json > kek_pub.pem
-KID=$(jq -r .data.kid kek.json)
-
-# 2. The key to send, as PKCS#8 DER (here a new secp256k1 key).
-openssl ecparam -name secp256k1 -genkey -noout \
-  | openssl pkcs8 -topk8 -nocrypt -outform DER -out key.der
-
-# 3. Wrap it: a random AES key wraps the private key (AES-KWP), and the KEK wraps the AES key (RSA-OAEP, SHA-1).
-AES=$(openssl rand -hex 32)
-openssl enc -id-aes256-wrap-pad -K "$AES" -iv A65959A6 -in key.der -out wrapped_key.bin
-echo -n "$AES" | xxd -r -p \
-  | openssl pkeyutl -encrypt -pubin -inkey kek_pub.pem \
-      -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha1 -pkeyopt rsa_mgf1_md:sha1 \
-      -out wrapped_aes.bin
-
-# 4. Assemble the .byok file: the RSA part first, then the AES part, base64url without padding.
-CT=$(cat wrapped_aes.bin wrapped_key.bin | openssl base64 -A | tr '+/' '-_' | tr -d '=')
-printf '{"schema_version":"1.0.0","header":{"kid":"%s","alg":"dir","enc":"CKM_RSA_AES_KEY_WRAP"},"ciphertext":"%s","generator":"openssl"}' \
-  "$KID" "$CT" > key.byok
-
-# 5. Import it, then delete the KEK.
-curl -s -X POST -H "X-Vault-Token: $VAULT_TOKEN" \
-  -d "{\"byok_blob\": \"$(openssl base64 -A -in key.byok)\"}" \
-  "$VAULT_ADDR/v1/blockchain/accounts/alice/import-byok"
-curl -s -X DELETE -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/blockchain/byok/keks/transfer1"
-```
-
-To send a key the other way, create a KEK on the receiving side, then call `byok/export/account/:name` with its `kid` and public key PEM:
-
-```bash
-curl -s -X POST -H "X-Vault-Token: $VAULT_TOKEN" \
-  --data "$(jq -n --arg kid "$KID" --rawfile pem kek_pub.pem '{kid: $kid, kek_public_key_pem: $pem}')" \
-  "$VAULT_ADDR/v1/blockchain/byok/export/account/alice" | jq -r .data.byok_blob | base64 -d > alice.byok
-```
-
-### Example: Unwrapping an Exported Wallet With OpenSSL
-
-To check the wrapping format of a wallet export without an HSM, let a local RSA key play the receiving KEK. This handles the seed in the clear, so use it only with a test wallet.
+To check the wrapping format of an export without an HSM, let a local RSA key play the receiving KEK. This handles the key in the clear, so use it only with a test wallet or account.
 
 ```bash
 # 1. A local KEK, in place of the HSM's.
@@ -639,3 +541,5 @@ xxd -p -c 64 seed.bin
 openssl kdf -keylen 64 -kdfopt digest:SHA512 -kdfopt pass:"$MNEMONIC" -kdfopt salt:mnemonic \
   -kdfopt iter:2048 PBKDF2 | tr -d ':' | tr 'A-F' 'a-f'
 ```
+
+An account export (`byok/export/account/:name`) unwraps the same way. The plaintext is then the PKCS#8 DER private key, which `openssl pkey -inform DER -in key.der -noout -text` prints.

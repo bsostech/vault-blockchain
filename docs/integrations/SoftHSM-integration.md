@@ -32,8 +32,7 @@ pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so -M   # lists RSA-PKCS-OAEP 
 
 - Unwrapping the AES key: do not set `CKA_VALUE_LEN` (`CKR_ATTRIBUTE_READ_ONLY`). The length comes from the unwrapped value.
 - Unwrapping the private key: do not set `CKA_EC_PARAMS` (`CKR_ATTRIBUTE_READ_ONLY`).
-- No policy needs to be configured: an extractable private key can be wrapped directly.
-- The wrapped private key that SoftHSM2 produces is PKCS#8 without the public key (72 bytes after AES-KWP). vault-blockchain imports it as is.
+- No policy needs to be configured.
 
 ## HD Wallet Seeds
 

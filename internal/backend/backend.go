@@ -48,7 +48,6 @@ func newBackend(conf *logical.BackendConfig) (*ethereumBackend, error) {
 			SealWrapStorage: []string{
 				"wallets/",
 				"accounts/",
-				"byok/",
 			},
 		},
 		Secrets:     []*framework.Secret{},

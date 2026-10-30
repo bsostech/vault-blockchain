@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package byok holds helpers shared by the BYOK export paths.
 package byok
 
 import (

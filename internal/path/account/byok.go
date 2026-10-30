@@ -23,10 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
-	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 
@@ -36,32 +33,6 @@ import (
 	"github.com/bsostech/vault-blockchain/internal/version"
 	"github.com/bsostech/vault-blockchain/pkg/utils"
 )
-
-// pathSingleKeyImportBYOK registers accounts/:name/import-byok for importing a key wrapped as a .byok blob.
-func pathSingleKeyImportBYOK() *framework.Path {
-	return &framework.Path{
-		Pattern:      "accounts/" + framework.GenericNameRegex("name") + "/import-byok",
-		HelpSynopsis: "Import a private key wrapped for a BYOK key exchange key (KEK).",
-		HelpDescription: "Takes a .byok blob wrapped with the public key of a KEK created under byok/keks, " +
-			"unwraps it inside the plugin, and stores the secp256k1 key as a single-key account.",
-		Fields: map[string]*framework.FieldSchema{
-			"name": {
-				Type:        framework.TypeString,
-				Description: "Logical account name in the path.",
-			},
-			"byok_blob": {
-				Type:        framework.TypeString,
-				Required:    true,
-				Description: "Contents of the .byok file, Base64 encoded.",
-			},
-		},
-		ExistenceCheck: ExistenceSingleKeyAccountSeed(),
-		Callbacks: map[logical.Operation]framework.OperationFunc{
-			logical.CreateOperation: handleSingleKeyAccountImportBYOK,
-			logical.UpdateOperation: handleSingleKeyAccountUpdate,
-		},
-	}
-}
 
 // pathSingleKeyExportBYOK registers byok/export/account/:name for exporting an account key wrapped as a .byok blob.
 //
@@ -95,91 +66,6 @@ func pathSingleKeyExportBYOK() *framework.Path {
 			logical.UpdateOperation: handleSingleKeyAccountExportBYOK,
 		},
 	}
-}
-
-// handleSingleKeyAccountImportBYOK unwraps a .byok blob with a stored KEK and stores the key as an account.
-func handleSingleKeyAccountImportBYOK(
-	ctx context.Context,
-	req *logical.Request,
-	data *framework.FieldData,
-) (*logical.Response, error) {
-	wrapper := model.NewFieldDataWrapper(data)
-	name, err := wrapper.MustGetString("name")
-	if err != nil || name == "" {
-		return logical.ErrorResponse("name is required"), nil
-	}
-	b64 := wrapper.GetString("byok_blob", "")
-	if b64 == "" {
-		return logical.ErrorResponse("byok_blob is required"), nil
-	}
-
-	blob, err := byokcrypto.ParseBlob(b64)
-	if err != nil {
-		return byok.RespondCode(req, http.StatusBadRequest, "invalid_blob", err.Error())
-	}
-
-	kekName, kekID, ok := byok.ParseKID(blob.Header.KID)
-	if !ok {
-		return byok.RespondCode(req, http.StatusNotFound, "kek_not_found", "no kek matches the blob kid")
-	}
-	kek, err := byok.LoadKEK(ctx, req.Storage, kekName)
-	if err != nil {
-		return nil, err
-	}
-	if kek == nil || kek.ID != kekID {
-		return byok.RespondCode(req, http.StatusNotFound, "kek_not_found", "no kek matches the blob kid")
-	}
-	defer utils.ZeroBytes(kek.PrivateKeyDER)
-	if kek.Expired(time.Now()) {
-		return byok.RespondCode(req, http.StatusGone, "kek_expired", "the kek has expired")
-	}
-
-	// Fail early on a taken name, before doing any private key work.
-	if _, err := ReadSingleKeyAccount(ctx, req.Storage, name); err == nil {
-		return byok.RespondCode(req, http.StatusConflict, "account_exists", "account already exists")
-	} else if !errors.Is(err, ErrSingleKeyAccountMissing) {
-		return nil, err
-	}
-
-	rsaKey, err := kek.PrivateKey()
-	if err != nil {
-		return nil, err
-	}
-	pkcs8, err := byokcrypto.UnwrapKey(rsaKey, blob)
-	if err != nil {
-		if errors.Is(err, byokcrypto.ErrInvalidBlob) {
-			return byok.RespondCode(req, http.StatusBadRequest, "invalid_blob", err.Error())
-		}
-		return byok.RespondCode(req, http.StatusBadRequest, "unwrap_failed", "the blob could not be unwrapped with this kek")
-	}
-	defer utils.ZeroBytes(pkcs8)
-
-	priv, err := byokcrypto.ParseSecp256k1PKCS8(pkcs8)
-	if err != nil {
-		if errors.Is(err, byokcrypto.ErrUnsupportedCurve) {
-			return byok.RespondCode(req, http.StatusBadRequest, "unsupported_curve", err.Error())
-		}
-		return byok.RespondCode(req, http.StatusBadRequest, "invalid_key", err.Error())
-	}
-	defer utils.ZeroKey(priv)
-
-	address := crypto.PubkeyToAddress(priv.PublicKey).Hex()
-	publicKeyString := hexutil.Encode(crypto.FromECDSAPub(&priv.PublicKey))[4:]
-	privHex := hexutil.Encode(crypto.FromECDSA(priv))[2:]
-
-	acct := model.NewAccount(address, privHex, publicKeyString)
-	if err := putSingleKeyAccountIfAbsent(ctx, req, name, acct); err != nil {
-		if errors.Is(err, errSingleKeyAccountAlreadyExists) {
-			return byok.RespondCode(req, http.StatusConflict, "account_exists", "account already exists")
-		}
-		return nil, err
-	}
-	return &logical.Response{
-		Data: map[string]interface{}{
-			"address":    acct.AddressStr,
-			"public_key": acct.PublicKeyStr,
-		},
-	}, nil
 }
 
 // handleSingleKeyAccountExportBYOK wraps an account private key for a receiving KEK public key.
