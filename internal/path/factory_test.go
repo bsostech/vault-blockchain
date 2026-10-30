@@ -25,11 +25,10 @@ import (
 
 	"github.com/bsostech/vault-blockchain/internal/path"
 	"github.com/bsostech/vault-blockchain/internal/path/account"
-	"github.com/bsostech/vault-blockchain/internal/path/byok"
 	"github.com/bsostech/vault-blockchain/internal/path/wallet"
 )
 
-// TestGetPaths verifies merged account, wallet, and byok paths are non-empty, unique, and cover both prefixes.
+// TestGetPaths verifies merged account and wallet paths are non-empty, unique, and cover both prefixes.
 func TestGetPaths(t *testing.T) {
 	t.Parallel()
 
@@ -39,7 +38,7 @@ func TestGetPaths(t *testing.T) {
 		t.Fatal("expected non-empty paths.")
 	}
 
-	wantLen := len(account.Paths()) + len(wallet.Paths(&walletMu)) + len(byok.Paths())
+	wantLen := len(account.Paths()) + len(wallet.Paths(&walletMu))
 	if len(got) != wantLen {
 		t.Fatalf("len(got)=%d want %d.", len(got), wantLen)
 	}

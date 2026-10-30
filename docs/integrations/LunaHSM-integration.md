@@ -27,15 +27,15 @@ The Luna Client must be installed and registered with the HSM (`/etc/Chrystoki.c
 - Unwrapping the private key: do not set `CKA_EC_PARAMS` (`CKR_ATTRIBUTE_TYPE_INVALID`). The curve comes from the PKCS#8 data.
 - Unwrapping the AES key: `CKA_VALUE_LEN=32` may be set or left out.
 - `CKA_TRUSTED` is not needed on the KEK public key.
-- The wrapped private key that Luna produces is PKCS#8 without the public key (72 bytes after AES-KWP). vault-blockchain imports it as is.
 
 ## Partition Policies
 
 | Policy | Name | Needed for |
 | ------ | ---- | ---------- |
-| 1 | Allow private key wrapping | HSM → vault-blockchain. When it is off, `C_WrapKey` fails with `CKR_KEY_NOT_WRAPPABLE`. |
-| 2 | Allow private key unwrapping | vault-blockchain → HSM |
-| 5, 6 | Allow secret key wrapping, unwrapping | Wrapping and unwrapping the temporary AES key |
+| 2 | Allow private key unwrapping | Unwrapping an account private key |
+| 6 | Allow secret key unwrapping | Unwrapping the temporary AES key and a wallet seed |
+
+Private key wrapping (policy 1) is not needed, so a partition in Cloning mode (policy 0 on), as production deployments usually keep, can receive keys.
 
 The Crypto Officer can view the policies; changing them needs the partition Security Officer:
 
@@ -43,24 +43,8 @@ The Crypto Officer can view the policies; changing them needs the partition Secu
 lunacm:> partition showpolicies -verbose
 lunacm:> slot set -slot <slot>
 lunacm:> role login -name po
-lunacm:> partition changepolicy -policy 1 -value 1
+lunacm:> partition changepolicy -policy 2 -value 1
 ```
-
-Read this before turning on policy 1 (see Thales, *Configuring the Partition for Cloning or Export of Private/Secret Keys*):
-
-- Changing policy 1 from off to on is always destructive: every object on the partition is deleted.
-- Policy 0 (Allow private key cloning) and policy 1 cannot both be on. A partition is either in Cloning mode or in Key Export mode.
-- So do not turn on policy 1 on a partition that already holds keys. Prepare a partition in Key Export mode first, then create the keys to transfer in it, with `CKA_EXTRACTABLE=true`.
-- While policy 1 is on, the Crypto Officer can wrap and take away any extractable private key. Decide whether to turn it off after the transfer; `partition showpolicies -verbose` shows whether that change is destructive.
-
-### Which Directions a Partition Supports
-
-| Partition mode | vault-blockchain → HSM | HSM → vault-blockchain |
-| -------------- | ---------------------- | ---------------------- |
-| Cloning (policy 0 on) | Supported: needs only policies 2 and 6 | Not possible: private keys cannot be wrapped |
-| Key Export (policy 1 on) | Supported | Supported |
-
-Production deployments usually keep Cloning mode, for example to replicate keys across several HSMs in a high-availability group. On such partitions, plan for vault-blockchain → HSM only: create or import the keys in vault-blockchain and export them to the HSM.
 
 ## HD Wallets (BIP-32)
 
@@ -82,4 +66,4 @@ The derived keys have the vendor key type `CKK_BIP32`. The parameter structures 
 Requirements:
 
 - BIP-32 is not a FIPS-approved algorithm, so the HSM must be configured to allow non-FIPS algorithms. This is an HSM-wide setting made by the HSM Security Officer; check the HSM policies with `hsm showpolicies` before planning on it.
-- Receiving the seed is an unwrap of secret keys only (the AES key and the seed), which needs policy 6 but neither policy 1 nor 2. It should therefore also work on a partition in Cloning mode. This has not been verified on hardware yet.
+- Receiving the seed is an unwrap of secret keys only (the AES key and the seed), which needs policy 6 but not policy 2.
