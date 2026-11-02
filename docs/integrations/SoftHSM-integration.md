@@ -32,6 +32,7 @@ pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so -M   # lists RSA-PKCS-OAEP 
 
 - Unwrapping the AES key: do not set `CKA_VALUE_LEN` (`CKR_ATTRIBUTE_READ_ONLY`). The length comes from the unwrapped value.
 - Unwrapping the private key: do not set `CKA_EC_PARAMS` (`CKR_ATTRIBUTE_READ_ONLY`).
+- An unwrapped private key has no `CKA_EC_POINT` (`CKR_ATTRIBUTE_TYPE_INVALID`). If an application reads the address from it, create a public key object with the same label (step 7 of [vault-blockchain → HSM](README.md#vault-blockchain--hsm)).
 - No policy needs to be configured.
 
 ## HD Wallet Seeds
