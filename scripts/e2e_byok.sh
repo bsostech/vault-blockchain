@@ -165,8 +165,9 @@ PUB_A="$(new_key a)"
 KEY_A="$(cat "$WORK/a.hex")"
 root POST "$MOUNT/accounts/acct-$RUN/import" "$(jq -n --arg k "$KEY_A" '{private_key:$k}')"
 expect_status "import an account with an OpenSSL key" 200
-expect_eq "imported public key equals the OpenSSL key's" "$(printf '%s' "$BODY" | jq -r .data.public_key)" "$PUB_A"
 ADDR_A="$(printf '%s' "$BODY" | jq -r .data.address)"
+root GET "$MOUNT/accounts/acct-$RUN/address" # import returns only the address
+expect_eq "imported public key equals the OpenSSL key's" "$(printf '%s' "$BODY" | jq -r .data.public_key)" "$PUB_A"
 api POST "$MOUNT/byok/export/account/acct-$RUN" "$OPS_TOKEN" "$HSM_REQ"
 expect_status "operator exports an account" 200
 expect_eq "export reports the account address" "$(printf '%s' "$BODY" | jq -r .data.address)" "$ADDR_A"
