@@ -93,7 +93,7 @@ func (e *byokEnv) createKEK(name string) map[string]interface{} {
 	}
 }
 
-// exportBYOK sends an export-byok write for the account, wrapping for kek.
+// exportBYOK sends a byok/export/account write for the account, wrapping for kek.
 func (e *byokEnv) exportBYOK(name string, kek map[string]interface{}) *logical.Response {
 	e.t.Helper()
 	return e.do(logical.UpdateOperation, "byok/export/account/"+name, map[string]interface{}{
@@ -295,7 +295,7 @@ func requireNotInBlob(t *testing.T, b64 string, secret []byte) {
 func TestExportPathOutsideAccounts(t *testing.T) {
 	t.Parallel()
 	for _, p := range Paths() {
-		if strings.Contains(p.Pattern, "export-byok") || strings.HasPrefix(p.Pattern, "accounts/") && strings.Contains(p.Pattern, "export") {
+		if strings.HasPrefix(p.Pattern, "accounts/") && strings.Contains(p.Pattern, "export") {
 			t.Fatalf("export path %q is under accounts/", p.Pattern)
 		}
 	}

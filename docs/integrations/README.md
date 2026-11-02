@@ -176,6 +176,7 @@ printf %s "$EC_POINT_HEX" | tail -c 128 | xxd -r -p | openssl dgst -keccak-256 -
 | `CKR_MECHANISM_INVALID` (0x70) | Wrong AES-KWP mechanism code for this HSM. |
 | `CKR_ATTRIBUTE_TYPE_INVALID` (0x12), `CKR_ATTRIBUTE_READ_ONLY` (0x10) | The unwrap template contains an attribute the token sets itself, such as `CKA_EC_PARAMS` or, on SoftHSM2, `CKA_VALUE_LEN`. |
 | `CKR_MECHANISM_PARAM_INVALID` (0x71) | OAEP `hashAlg` and `mgf` differ; use SHA-1 for both. |
+| `invalid_kek_public_key` | On export: the PEM is not an RSA public key of 2048, 3072, or 4096 bits, often a wrong modulus or exponent in the conversion ([KEK Public Key](#kek-public-key)). |
 
 ## Other HSMs
 
