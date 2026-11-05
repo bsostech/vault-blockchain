@@ -242,6 +242,42 @@ expect_status "user cannot export their own wallet" 403
 api POST "$MOUNT/byok/export/wallet/$WALLET" "$ALICE_TOKEN" "$HSM_REQ"
 expect_status "user cannot export someone else's wallet" 403
 
+section "derived account export"
+# Uses the wallet and addresses from the wallet export section.
+api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/1" "$OPS_TOKEN" "$HSM_REQ"
+expect_status "operator exports derived account 1" 200
+expect_eq "export echoes the wallet_id" "$(printf '%s' "$BODY" | jq -r .data.wallet_id)" "$WALLET"
+expect_eq "export echoes the index" "$(printf '%s' "$BODY" | jq -r .data.index)" 1
+expect_eq "export reports the account address" "$(printf '%s' "$BODY" | jq -r .data.address | tr 'A-F' 'a-f')" "$WADDR1"
+expect_eq "export reports the derivation path" "$(printf '%s' "$BODY" | jq -r .data.derivation_path)" "m/44'/60'/0'/0/1"
+expect_eq "derived export fingerprint equals the SHA-256 of the DER public key" "$(printf '%s' "$BODY" | jq -r .data.kek_public_key_sha256)" "$HSM_FP"
+case "$BODY" in *abandon*) bad "the export response contains the mnemonic" ;; *) ok "the export response does not contain the mnemonic" ;; esac
+printf '%s' "$BODY" | jq -r .data.byok_blob | openssl base64 -d -A >"$WORK/derived.byok"
+expect_eq "derived account blobs carry no key_type" "$(jq -r '.key_type // "absent"' "$WORK/derived.byok")" absent
+expect_eq "blob header carries the kid" "$(jq -r .header.kid "$WORK/derived.byok")" "$HSM_KID"
+unwrap "$WORK/derived.byok" "$WORK/hsm.pem" "$WORK/derived.der"
+expect_eq "the AES key unwraps and is 256 bits" "$AES_LEN" 32
+DERIVED_ADDR="0x$(openssl pkey -inform DER -in "$WORK/derived.der" -pubout -outform DER | tail -c 64 | openssl dgst -keccak-256 -binary | tail -c 20 | xxd -p)"
+expect_eq "the unwrapped PKCS#8 key has the address of account 1" "$DERIVED_ADDR" "$WADDR1"
+expect_eq "the unwrapped key is m/44'/60'/0'/0/1 of the exported seed" "$DERIVED_ADDR" "0x$(eth_address_at "$WORK/wallet.seed" 1)"
+
+api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/5" "$OPS_TOKEN" "$HSM_REQ"
+expect_status "export of an account not derived yet is 404" 404
+expect_contains "404 carries account_not_found" "$BODY" "account_not_found"
+api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/2147483648" "$OPS_TOKEN" "$HSM_REQ"
+expect_status "export of an index beyond BIP-44 is 400" 400
+expect_contains "400 carries invalid_index" "$BODY" "invalid_index"
+api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/0" "$OPS_TOKEN" '{"kid":"x","kek_public_key_pem":"not pem"}'
+expect_status "derived export with a bad public key is 400" 400
+expect_contains "400 carries invalid_kek_public_key" "$BODY" "invalid_kek_public_key"
+
+api POST "$MOUNT/wallets/$ALICE/accounts" "$ALICE_TOKEN"
+expect_status "user derives an account in their own wallet" 200
+api POST "$MOUNT/byok/export/wallet/$ALICE/accounts/0" "$ALICE_TOKEN" "$HSM_REQ"
+expect_status "user cannot export an account of their own wallet" 403
+api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/0" "$ALICE_TOKEN" "$HSM_REQ"
+expect_status "user cannot export an account of someone else's wallet" 403
+
 section "policies: users"
 api POST "$MOUNT/accounts/$ALICE/address" "$ALICE_TOKEN"
 expect_status "user creates their own account" 200

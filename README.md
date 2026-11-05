@@ -408,12 +408,15 @@ No parameters.
 
 ## API — BYOK (Bring Your Own Key)
 
-BYOK moves a secp256k1 private key, or the BIP-39 seed of an HD wallet, from vault-blockchain to another key store, such as an HSM, without the key ever being in the clear in transit. The receiving side creates a key exchange key (KEK), an RSA key pair whose private half never leaves it. vault-blockchain wraps the key with the KEK public key and returns a `.byok` blob. Only the receiving side can unwrap it.
+BYOK moves a secp256k1 private key, either a single-key account's or one derived account of an HD wallet, or the BIP-39 seed of an HD wallet, from vault-blockchain to another key store, such as an HSM, without the key ever being in the clear in transit. The receiving side creates a key exchange key (KEK), an RSA key pair whose private half never leaves it. vault-blockchain wraps the key with the KEK public key and returns a `.byok` blob. Only the receiving side can unwrap it.
 
 | What moves | Path | Receiving side |
 | ---------- | ---- | -------------- |
 | secp256k1 private key | `byok/export/account/:name` | the other store |
+| secp256k1 private key of one HD wallet account | `byok/export/wallet/:wallet_id/accounts/:index` | the other store; no BIP-32 needed |
 | HD wallet BIP-39 seed | `byok/export/wallet/:wallet_id` | the other store; needs BIP-32 to derive accounts |
+
+Cloud KMSs (AWS KMS, Google Cloud KMS, Azure Key Vault) have no BIP-32, so they can take a single-key account or one derived account of a wallet, but not a wallet seed.
 
 Keys only move out of vault-blockchain through BYOK. To bring an existing key into vault-blockchain, use `accounts/:name/import` (private key) or `wallets/:wallet_id/import` (mnemonic).
 
@@ -449,7 +452,7 @@ A `.byok` file is JSON:
 * RSA-OAEP uses SHA-1 for both the hash and MGF1, with an empty label. This is fixed by the Azure format and is what HSMs expect.
 * AES-KWP is AES Key Wrap with Padding (RFC 5649). vault-blockchain always uses a 256-bit AES key.
 * The wrapped private key is a PKCS#8 `PrivateKeyInfo` (DER) holding an RFC 5915 `ECPrivateKey` on secp256k1 (OID `1.3.132.0.10`).
-* `key_type` is optional and not part of the Azure format. It is absent for a private key. `byok/export/wallet/:wallet_id` sets it to `bip39-seed`; the wrapped value is then the raw 64-byte BIP-39 seed instead of PKCS#8 (see [Wallet Export](#wallet-export)).
+* `key_type` is optional and not part of the Azure format. It is absent for a private key, including one derived from a wallet. `byok/export/wallet/:wallet_id` sets it to `bip39-seed`; the wrapped value is then the raw 64-byte BIP-39 seed instead of PKCS#8 (see [Wallet Export](#wallet-export)).
 * The export response returns the whole `.byok` file Base64 encoded (standard alphabet) as `byok_blob`.
 
 ### Export
@@ -505,9 +508,43 @@ The seed gives every account of the wallet, those already created and any create
 | 400 | `invalid_kek_public_key` | The PEM cannot be parsed, is not RSA, or is not 2048, 3072, or 4096 bits. |
 | 404 | `wallet_not_found` | No such wallet. |
 
+#### Derived Account Export
+
+##### `POST blockchain/byok/export/wallet/:wallet_id/accounts/:index`
+
+* `wallet_id` `(string: <required>)` - Wallet the account belongs to, in the path.
+* `index` `(string: <required>)` - BIP-44 address index of an existing derived account (0 to 2147483647), in the path.
+* `kid` `(string: <required>)` - Identifier of the receiving KEK, written to the blob header (up to 1024 bytes).
+* `kek_public_key_pem` `(string: <required>)` - Receiving KEK public key as PEM, `PUBLIC KEY` or `RSA PUBLIC KEY` (RSA, 2048, 3072, or 4096 bits).
+
+**Response:**
+
+```json
+{
+  "byok_blob": "<base64>",
+  "wallet_id": "alice",
+  "index": 1,
+  "address": "0x...",
+  "derivation_path": "m/44'/60'/0'/0/1",
+  "kek_public_key_sha256": "<hex>"
+}
+```
+
+vault-blockchain derives the private key at `m/44'/60'/0'/0/<index>`, checks that it gives the account's stored address, and wraps it exactly like an account export: PKCS#8, no `key_type`. The receiving side imports it the same way as a single-key account and does not need BIP-32, so this is the way to move a wallet account into a cloud KMS. What it receives is one plain secp256k1 key, not a wallet: each further account needs its own export.
+
+The account must already exist (created with `POST wallets/:wallet_id/accounts` or `accounts/batch`); export never creates one. Export copies the key: the wallet and its accounts in vault-blockchain are unchanged. Only that one key leaves vault-blockchain; the seed and the other accounts do not.
+
+Like the other exports it is under `byok/export/`, not under `wallets/`, so users cannot export their own accounts. `configs/blockchain_byok.hcl` grants it to operators. Its policy path, `blockchain/byok/export/wallet/+/accounts/+`, is separate from the seed export's `blockchain/byok/export/wallet/+`: an operator can be allowed to move single accounts without being able to take the whole wallet.
+
+| HTTP | Error | Cause |
+| ---- | ----- | ----- |
+| 400 | `invalid_index` | `index` is greater than 2147483647. |
+| 400 | `invalid_kek_public_key` | The PEM cannot be parsed, is not RSA, or is not 2048, 3072, or 4096 bits. |
+| 404 | `account_not_found` | No such wallet, or no account at that index. |
+
 ### End-to-End Check
 
-`scripts/e2e_byok.sh` exercises all of the above against a live Vault over HTTP, including the policies in `configs/`: users are refused `byok/export/`, operators are not. It unwraps the exported blobs with OpenSSL using a local RSA key in place of an HSM KEK, and checks the account key against the original and the wallet seed against a known mnemonic and the wallet's derived addresses. It creates an auth mount, policies, and users, so run it against a throwaway dev server:
+`scripts/e2e_byok.sh` exercises all of the above against a live Vault over HTTP, including the policies in `configs/`: users are refused `byok/export/`, operators are not. It unwraps the exported blobs with OpenSSL using a local RSA key in place of an HSM KEK, and checks the account key against the original, the wallet seed against a known mnemonic and the wallet's derived addresses, and a derived account's key against its address. It creates an auth mount, policies, and users, so run it against a throwaway dev server:
 
 ```bash
 VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=<root token> bash scripts/e2e_byok.sh
@@ -542,4 +579,4 @@ openssl kdf -keylen 64 -kdfopt digest:SHA512 -kdfopt pass:"$MNEMONIC" -kdfopt sa
   -kdfopt iter:2048 PBKDF2 | tr -d ':' | tr 'A-F' 'a-f'
 ```
 
-An account export (`byok/export/account/:name`) unwraps the same way. The plaintext is then the PKCS#8 DER private key, which `openssl pkey -inform DER -in key.der -noout -text` prints.
+An account export (`byok/export/account/:name`) or a derived account export (`byok/export/wallet/:wallet_id/accounts/:index`) unwraps the same way. The plaintext is then the PKCS#8 DER private key, which `openssl pkey -inform DER -in key.der -noout -text` prints.
