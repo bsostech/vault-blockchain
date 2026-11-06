@@ -473,7 +473,7 @@ Export returns the account's private key wrapped for whatever public key the cal
 
 | HTTP | Error | Cause |
 | ---- | ----- | ----- |
-| 400 | `invalid_kek_public_key` | The PEM cannot be parsed, is not RSA, or is not 2048, 3072, or 4096 bits. |
+| 400 | `invalid_kek_public_key` | The PEM cannot be parsed, is not RSA, is not 2048, 3072, or 4096 bits, or has an invalid public exponent. |
 | 404 | `account_not_found` | No such account. |
 
 #### Wallet Export
@@ -505,7 +505,7 @@ The seed gives every account of the wallet, those already created and any create
 
 | HTTP | Error | Cause |
 | ---- | ----- | ----- |
-| 400 | `invalid_kek_public_key` | The PEM cannot be parsed, is not RSA, or is not 2048, 3072, or 4096 bits. |
+| 400 | `invalid_kek_public_key` | The PEM cannot be parsed, is not RSA, is not 2048, 3072, or 4096 bits, or has an invalid public exponent. |
 | 404 | `wallet_not_found` | No such wallet. |
 
 #### Derived Account Export
@@ -539,7 +539,7 @@ Like the other exports it is under `byok/export/`, not under `wallets/`, so user
 | HTTP | Error | Cause |
 | ---- | ----- | ----- |
 | 400 | `invalid_index` | `index` is greater than 2147483647 or has leading zeros. |
-| 400 | `invalid_kek_public_key` | The PEM cannot be parsed, is not RSA, or is not 2048, 3072, or 4096 bits. |
+| 400 | `invalid_kek_public_key` | The PEM cannot be parsed, is not RSA, is not 2048, 3072, or 4096 bits, or has an invalid public exponent. |
 | 404 | `wallet_not_found` | No such wallet. |
 | 404 | `account_not_found` | The wallet exists but has no account at that index. |
 

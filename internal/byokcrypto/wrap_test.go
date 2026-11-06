@@ -220,19 +220,30 @@ func TestParseKEKPublicKeyPEM(t *testing.T) {
 		t.Fatal(err)
 	}
 	ecPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: ecDER}))
+	withExponent := func(e int) string {
+		der := x509.MarshalPKCS1PublicKey(&rsa.PublicKey{N: k2048.N, E: e})
+		return string(pem.EncodeToMemory(&pem.Block{Type: "RSA PUBLIC KEY", Bytes: der}))
+	}
 
-	for name, in := range map[string]string{"spki 2048": spki(k2048), "spki 3072": spki(k3072), "pkcs1 2048": pkcs1} {
+	for name, in := range map[string]string{
+		"spki 2048":  spki(k2048),
+		"spki 3072":  spki(k3072),
+		"pkcs1 2048": pkcs1,
+		"exponent 3": withExponent(3),
+	} {
 		if _, err := ParseKEKPublicKeyPEM(in); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
 	for name, in := range map[string]string{
-		"1024-bit":     spki(k1024),
-		"ec key":       ecPEM,
-		"not pem":      "hello",
-		"empty":        "",
-		"wrong type":   strings.Replace(spki(k2048), "PUBLIC KEY", "CERTIFICATE", 2),
-		"trailing pem": spki(k2048) + spki(k3072),
+		"1024-bit":      spki(k1024),
+		"ec key":        ecPEM,
+		"not pem":       "hello",
+		"empty":         "",
+		"wrong type":    strings.Replace(spki(k2048), "PUBLIC KEY", "CERTIFICATE", 2),
+		"trailing pem":  spki(k2048) + spki(k3072),
+		"exponent 1":    withExponent(1),
+		"even exponent": withExponent(65536),
 	} {
 		if _, err := ParseKEKPublicKeyPEM(in); !errors.Is(err, ErrInvalidKEKPublicKey) {
 			t.Fatalf("%s: err=%v", name, err)
