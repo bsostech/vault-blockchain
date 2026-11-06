@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -81,6 +82,11 @@ func handleDerivedAccountExportBYOK(
 	if err != nil {
 		return byok.RespondCode(req, http.StatusBadRequest, "invalid_index", err.Error())
 	}
+	// Accounts are stored under the canonical decimal form, so "01" would never match account 1. Refuse it rather
+	// than normalise it: one account keeps one path, and a policy naming accounts/1 cannot be avoided via accounts/01.
+	if strconv.FormatUint(uint64(index), 10) != indexStr {
+		return byok.RespondCode(req, http.StatusBadRequest, "invalid_index", "index must not have leading zeros")
+	}
 	export, errResp := byok.ParseExportRequest(data)
 	if errResp != nil {
 		return errResp, nil
@@ -91,7 +97,7 @@ func handleDerivedAccountExportBYOK(
 	priv, derived, err := LoadWalletDerivedPrivateKey(ctx, req.Storage, walletID, indexStr)
 	if err != nil {
 		if errors.Is(err, ErrDerivedAccountMissing) {
-			return byok.RespondCode(req, http.StatusNotFound, "account_not_found", "derived account not found")
+			return respondDerivedAccountMissing(ctx, req, walletID)
 		}
 		return nil, err
 	}
@@ -105,10 +111,27 @@ func handleDerivedAccountExportBYOK(
 		Data: map[string]interface{}{
 			"byok_blob":             wrapped.Blob,
 			"wallet_id":             walletID,
-			"index":                 index,
+			"account_index":         indexStr,
 			"address":               derived.Address,
 			"derivation_path":       derived.DerivationPath,
 			"kek_public_key_sha256": wrapped.KEKFingerprint,
 		},
 	}, nil
+}
+
+// respondDerivedAccountMissing tells a missing wallet from a missing account in an existing wallet. It runs only
+// after the load failed, so the extra read costs nothing on a successful export.
+func respondDerivedAccountMissing(
+	ctx context.Context,
+	req *logical.Request,
+	walletID string,
+) (*logical.Response, error) {
+	stored, err := ReadWalletSeed(ctx, req.Storage, walletID)
+	if err != nil {
+		return nil, err
+	}
+	if stored == nil || stored.Mnemonic == "" {
+		return byok.RespondCode(req, http.StatusNotFound, "wallet_not_found", "wallet not found")
+	}
+	return byok.RespondCode(req, http.StatusNotFound, "account_not_found", "derived account not found")
 }

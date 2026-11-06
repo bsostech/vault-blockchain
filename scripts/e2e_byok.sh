@@ -247,7 +247,7 @@ section "derived account export"
 api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/1" "$OPS_TOKEN" "$HSM_REQ"
 expect_status "operator exports derived account 1" 200
 expect_eq "export echoes the wallet_id" "$(printf '%s' "$BODY" | jq -r .data.wallet_id)" "$WALLET"
-expect_eq "export echoes the index" "$(printf '%s' "$BODY" | jq -r .data.index)" 1
+expect_eq "export echoes the account_index" "$(printf '%s' "$BODY" | jq -r .data.account_index)" 1
 expect_eq "export reports the account address" "$(printf '%s' "$BODY" | jq -r .data.address | tr 'A-F' 'a-f')" "$WADDR1"
 expect_eq "export reports the derivation path" "$(printf '%s' "$BODY" | jq -r .data.derivation_path)" "m/44'/60'/0'/0/1"
 expect_eq "derived export fingerprint equals the SHA-256 of the DER public key" "$(printf '%s' "$BODY" | jq -r .data.kek_public_key_sha256)" "$HSM_FP"
@@ -264,8 +264,14 @@ expect_eq "the unwrapped key is m/44'/60'/0'/0/1 of the exported seed" "$DERIVED
 api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/5" "$OPS_TOKEN" "$HSM_REQ"
 expect_status "export of an account not derived yet is 404" 404
 expect_contains "404 carries account_not_found" "$BODY" "account_not_found"
+api POST "$MOUNT/byok/export/wallet/none-$RUN/accounts/0" "$OPS_TOKEN" "$HSM_REQ"
+expect_status "export from a missing wallet is 404" 404
+expect_contains "404 carries wallet_not_found" "$BODY" "wallet_not_found"
 api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/2147483648" "$OPS_TOKEN" "$HSM_REQ"
 expect_status "export of an index beyond BIP-44 is 400" 400
+expect_contains "400 carries invalid_index" "$BODY" "invalid_index"
+api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/01" "$OPS_TOKEN" "$HSM_REQ"
+expect_status "export of an index with a leading zero is 400" 400
 expect_contains "400 carries invalid_index" "$BODY" "invalid_index"
 api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/0" "$OPS_TOKEN" '{"kid":"x","kek_public_key_pem":"not pem"}'
 expect_status "derived export with a bad public key is 400" 400

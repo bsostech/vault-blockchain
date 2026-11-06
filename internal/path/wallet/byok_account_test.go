@@ -24,7 +24,6 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/hex"
-	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -88,7 +87,7 @@ func TestDerivedAccountExportBYOK_roundTrip(t *testing.T) {
 	if resp == nil || resp.IsError() {
 		t.Fatalf("export failed: %#v", resp)
 	}
-	if resp.Data["wallet_id"] != "w1" || fmt.Sprint(resp.Data["index"]) != "1" ||
+	if resp.Data["wallet_id"] != "w1" || resp.Data["account_index"] != "1" ||
 		resp.Data["address"] != addrs[1] || resp.Data["derivation_path"] != "m/44'/60'/0'/0/1" {
 		t.Fatalf("data=%#v", resp.Data)
 	}
@@ -227,15 +226,25 @@ func TestDerivedAccountExportBYOK_rejects(t *testing.T) {
 	t.Run("index out of range", func(t *testing.T) {
 		wantCode(t, e.exportDerived("w1", "2147483648", kek), http.StatusBadRequest, "invalid_index")
 	})
-	t.Run("leading zero index", func(t *testing.T) {
-		// Storage keys use the canonical decimal form, so "00" must not reach account 0 under another name.
-		wantCode(t, e.exportDerived("w1", "00", kek), http.StatusNotFound, "account_not_found")
-	})
+	for _, index := range []string{"00", "01"} {
+		t.Run("leading zero index "+index, func(t *testing.T) {
+			// One account must have one path: a policy naming accounts/0 must not be avoidable through accounts/00.
+			wantCode(t, e.exportDerived("w1", index, kek), http.StatusBadRequest, "invalid_index")
+		})
+	}
 	t.Run("index not derived yet", func(t *testing.T) {
 		wantCode(t, e.exportDerived("w1", "5", kek), http.StatusNotFound, "account_not_found")
 	})
 	t.Run("wallet not found", func(t *testing.T) {
-		wantCode(t, e.exportDerived("nobody", "0", kek), http.StatusNotFound, "account_not_found")
+		wantCode(t, e.exportDerived("nobody", "0", kek), http.StatusNotFound, "wallet_not_found")
+	})
+	t.Run("empty mnemonic", func(t *testing.T) {
+		mustPutWalletSeed(context.Background(), t, e.s, "blank", "")
+		wantCode(t, e.exportDerived("blank", "0", kek), http.StatusNotFound, "wallet_not_found")
+	})
+	t.Run("account entry without a wallet", func(t *testing.T) {
+		mustPutDerivedAccount(context.Background(), t, e.s, "orphan", "0", testMnemonic)
+		wantCode(t, e.exportDerived("orphan", "0", kek), http.StatusNotFound, "wallet_not_found")
 	})
 }
 
