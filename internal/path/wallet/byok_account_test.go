@@ -39,6 +39,9 @@ import (
 	"github.com/bsostech/vault-blockchain/internal/path/storagekey"
 )
 
+// testMnemonicOther is a second standard BIP-39 test mnemonic, for a wallet distinct from testMnemonic's.
+const testMnemonicOther = "legal winner thank year wave sausage worth useful legal winner thank yellow"
+
 // exportDerived sends a derived-account export write for walletID/index, wrapping for kek.
 func (e *walletBYOKEnv) exportDerived(walletID, index string, kek map[string]interface{}) *logical.Response {
 	e.t.Helper()
@@ -188,6 +191,7 @@ func TestDerivedAccountExportBYOK_rejects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	kekModulus := e.keks["k1"].N
 
 	send := func(walletID, index string, data map[string]interface{}) *logical.Response {
 		return e.do(logical.UpdateOperation, derivedExportPath(walletID, index), data)
@@ -215,8 +219,10 @@ func TestDerivedAccountExportBYOK_rejects(t *testing.T) {
 		plainError(t, send("w1", "0", map[string]interface{}{"kid": kek["kid"]}))
 	})
 	for name, pemStr := range map[string]string{
-		"garbage pem":  "hello",
-		"1024-bit key": pemOfPublicKey(t, &small.PublicKey),
+		"garbage pem":   "hello",
+		"1024-bit key":  pemOfPublicKey(t, &small.PublicKey),
+		"exponent 1":    pemOfPublicKey(t, &rsa.PublicKey{N: kekModulus, E: 1}),
+		"even exponent": pemOfPublicKey(t, &rsa.PublicKey{N: kekModulus, E: 65536}),
 	} {
 		t.Run(name, func(t *testing.T) {
 			resp := send("w1", "0", map[string]interface{}{"kid": kek["kid"], "kek_public_key_pem": pemStr})
@@ -246,6 +252,44 @@ func TestDerivedAccountExportBYOK_rejects(t *testing.T) {
 		mustPutDerivedAccount(context.Background(), t, e.s, "orphan", "0", testMnemonic)
 		wantCode(t, e.exportDerived("orphan", "0", kek), http.StatusNotFound, "wallet_not_found")
 	})
+}
+
+// TestDerivedAccountExportBYOK_bodyCannotOverridePath verifies the wallet and index come from the path, the part
+// Vault policies match on. If body fields won, a policy naming one account could be used to export another.
+func TestDerivedAccountExportBYOK_bodyCannotOverridePath(t *testing.T) {
+	t.Parallel()
+	// Arrange
+	e := newWalletBYOKEnv(t)
+	e.importWallet("w1", testMnemonic)
+	e.deriveNext("w1")
+	want := e.deriveNext("w1")
+	e.importWallet("w2", testMnemonicOther)
+	e.deriveNext("w2")
+	kek := e.createKEK("k1")
+
+	// Act
+	resp := e.do(logical.UpdateOperation, derivedExportPath("w1", "1"), map[string]interface{}{
+		"kid":                kek["kid"],
+		"kek_public_key_pem": kek["public_key_pem"],
+		"wallet_id":          "w2",
+		"index":              "0",
+	})
+
+	// Assert
+	if resp == nil || resp.IsError() {
+		t.Fatalf("export failed: %#v", resp)
+	}
+	if resp.Data["wallet_id"] != "w1" || resp.Data["account_index"] != "1" || resp.Data["address"] != want {
+		t.Fatalf("data=%#v, want w1 account 1 (%s)", resp.Data, want)
+	}
+	_, der := e.unwrapPKCS8(resp, "k1")
+	priv, err := byokcrypto.ParseSecp256k1PKCS8(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := crypto.PubkeyToAddress(priv.PublicKey).Hex(); got != want {
+		t.Fatalf("unwrapped key is %s, want w1 account 1 (%s)", got, want)
+	}
 }
 
 // TestDerivedAccountExportBYOK_storedAddressMismatch verifies a derived account whose stored address does
