@@ -42,6 +42,37 @@ func TestZeroKey(t *testing.T) {
 	}
 }
 
+// TestZeroKey_overwritesScalarWords verifies the scalar's memory is overwritten, not just the big.Int's length.
+func TestZeroKey_overwritesScalarWords(t *testing.T) {
+	t.Parallel()
+	// Arrange: a scalar with a set bit in every word; Bits shares the big.Int's backing array.
+	raw := make([]byte, 32)
+	for i := range raw {
+		raw[i] = 0x11
+	}
+	pk, err := crypto.ToECDSA(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	words := pk.D.Bits()
+	if len(words) == 0 {
+		t.Fatal("sanity: expected scalar words before ZeroKey.")
+	}
+
+	// Act
+	ZeroKey(pk)
+
+	// Assert
+	for i, w := range words {
+		if w != 0 {
+			t.Fatalf("word %d still holds scalar data after ZeroKey.", i)
+		}
+	}
+	if pk.D.Sign() != 0 {
+		t.Fatalf("after ZeroKey D.Sign()=%d want 0.", pk.D.Sign())
+	}
+}
+
 func TestZeroKey_nilReceiver(t *testing.T) {
 	t.Parallel()
 	ZeroKey(nil)
