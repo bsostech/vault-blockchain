@@ -34,6 +34,11 @@ func ZeroKey(k *ecdsa.PrivateKey) {
 	if k == nil || k.D == nil {
 		return
 	}
+	// SetInt64 alone only shortens the big.Int and leaves the scalar in its backing array, which Bits shares.
+	words := k.D.Bits()
+	for i := range words {
+		words[i] = 0
+	}
 	k.D.SetInt64(0)
 }
 
