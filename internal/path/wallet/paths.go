@@ -38,6 +38,7 @@ func Paths(walletMu *sync.Map) []*framework.Path {
 		pathWalletEncrypt(),
 		pathWalletDecrypt(),
 		pathWalletExportBYOK(),
+		pathDerivedAccountExportBYOK(),
 	}
 }
 

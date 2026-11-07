@@ -21,7 +21,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -30,7 +29,6 @@ import (
 	"github.com/bsostech/vault-blockchain/internal/byokcrypto"
 	"github.com/bsostech/vault-blockchain/internal/model"
 	"github.com/bsostech/vault-blockchain/internal/path/byok"
-	"github.com/bsostech/vault-blockchain/internal/version"
 	"github.com/bsostech/vault-blockchain/pkg/utils"
 )
 
@@ -47,22 +45,12 @@ func pathWalletExportBYOK() *framework.Path {
 		HelpDescription: "Wraps the wallet's 64-byte BIP-39 seed (empty passphrase) for the given RSA public key and " +
 			"returns a .byok blob with key_type bip39-seed. The wallet is not changed. The seed derives every " +
 			"account of the wallet, so grant byok/export/ only to trusted operators.",
-		Fields: map[string]*framework.FieldSchema{
+		Fields: byok.ExportFields(map[string]*framework.FieldSchema{
 			"wallet_id": {
 				Type:        framework.TypeString,
 				Description: "Identifier of the wallet to export, in the path.",
 			},
-			"kid": {
-				Type:        framework.TypeString,
-				Required:    true,
-				Description: "Identifier of the receiving KEK, written to the blob header.",
-			},
-			"kek_public_key_pem": {
-				Type:        framework.TypeString,
-				Required:    true,
-				Description: "Receiving KEK public key as PEM (RSA 2048, 3072, or 4096 bits).",
-			},
-		},
+		}),
 		Callbacks: map[logical.Operation]framework.OperationFunc{
 			logical.UpdateOperation: handleWalletExportBYOK,
 		},
@@ -80,20 +68,9 @@ func handleWalletExportBYOK(
 	if err != nil || walletID == "" {
 		return logical.ErrorResponse("wallet_id is required"), nil
 	}
-	kid := strings.TrimSpace(wrapper.GetString("kid", ""))
-	if kid == "" {
-		return logical.ErrorResponse("kid is required"), nil
-	}
-	if len(kid) > byok.MaxKIDLength {
-		return logical.ErrorResponse("kid is longer than %d bytes", byok.MaxKIDLength), nil
-	}
-	pemStr := wrapper.GetString("kek_public_key_pem", "")
-	if pemStr == "" {
-		return logical.ErrorResponse("kek_public_key_pem is required"), nil
-	}
-	kekPub, err := byokcrypto.ParseKEKPublicKeyPEM(pemStr)
-	if err != nil {
-		return byok.RespondCode(req, http.StatusBadRequest, "invalid_kek_public_key", byok.InvalidKEKPublicKeyMessage)
+	export, errResp := byok.ParseExportRequest(data)
+	if errResp != nil {
+		return errResp, nil
 	}
 
 	stored, err := ReadWalletSeed(ctx, req.Storage, walletID)
@@ -110,25 +87,16 @@ func handleWalletExportBYOK(
 	seed := bip39.NewSeed(stored.Mnemonic, "")
 	defer utils.ZeroBytes(seed)
 
-	blob, err := byokcrypto.WrapKey(kekPub, kid, seed, "vault-blockchain v"+version.Version)
+	wrapped, err := export.Wrap(seed, byokcrypto.KeyTypeBIP39Seed)
 	if err != nil {
 		return nil, fmt.Errorf("wrap seed for wallet %s: %w", walletID, err)
 	}
-	blob.KeyType = byokcrypto.KeyTypeBIP39Seed
-	encoded, err := blob.Encode()
-	if err != nil {
-		return nil, err
-	}
-	fingerprint, err := byokcrypto.PublicKeyFingerprint(kekPub)
-	if err != nil {
-		return nil, err
-	}
 	return &logical.Response{
 		Data: map[string]interface{}{
-			"byok_blob":             encoded,
+			"byok_blob":             wrapped.Blob,
 			"wallet_id":             walletID,
 			"key_type":              byokcrypto.KeyTypeBIP39Seed,
-			"kek_public_key_sha256": fingerprint,
+			"kek_public_key_sha256": wrapped.KEKFingerprint,
 		},
 	}, nil
 }

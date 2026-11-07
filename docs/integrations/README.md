@@ -2,12 +2,12 @@
 
 These guides show how a PKCS#11 HSM receives secp256k1 keys exported from vault-blockchain through the BYOK API. The API itself (parameters, responses, error codes) is documented in the [BYOK section of the main README](../../README.md#api--byok-bring-your-own-key).
 
-| HSM | vault-blockchain → HSM | Guide |
+| HSM | HD wallet seed | Guide |
 | --- | --- | --- |
-| Thales Luna HSM 7 | Supported | [LunaHSM-integration.md](LunaHSM-integration.md) |
-| SoftHSM2 | Supported | [SoftHSM-integration.md](SoftHSM-integration.md) |
+| Thales Luna HSM 7 | Derives the accounts with BIP-32 | [LunaHSM-integration.md](LunaHSM-integration.md) |
+| SoftHSM2 | Stores the seed only; no BIP-32 | [SoftHSM-integration.md](SoftHSM-integration.md) |
 
-Both HSMs were tested with KEKs of 2048, 3072, and 4096 bits. The table covers account keys; for HD wallet seeds see [HD Wallet Seed](#hd-wallet-seed). Other PKCS#11 HSMs follow the same steps; what usually differs is the AES-KWP mechanism code and which template attributes the token accepts. See [Other HSMs](#other-hsms).
+Both HSMs receive account keys and were tested with KEKs of 2048, 3072, and 4096 bits. For HD wallets see [HD Wallet Account](#hd-wallet-account) and [HD Wallet Seed](#hd-wallet-seed). Other PKCS#11 HSMs follow the same steps; what usually differs is the AES-KWP mechanism code and which template attributes the token accepts. See [Other HSMs](#other-hsms).
 
 This page covers what is common to every HSM: the call sequence, the templates, and the format conversions. The vendor guides only list what is specific to each HSM.
 
@@ -92,6 +92,16 @@ Use one KEK per transfer and delete it afterwards. Both sides should compute the
 
 Export copies the key: the account in vault-blockchain is unchanged.
 
+### HD Wallet Account
+
+`byok/export/wallet/:wallet_id/accounts/:index` sends the private key of one existing HD wallet account. It has the same format as an account key, so the HSM does not need BIP-32 and the steps above apply, with these differences:
+
+- Step 3 calls `byok/export/wallet/<wallet_id>/accounts/<index>` instead of `byok/export/account/<name>`. The account must already exist; export does not create it. The response also returns the account's `address` and `derivation_path`.
+- vault-blockchain does not return a derived account's public key, so step 6 checks the address instead: recover the public key from the signature with recovery id 0 and 1 ([Signatures](#signatures)), compute each address ([Public Key and Address](#public-key-and-address)), and check that one of them equals `address` in the export response.
+- `GET accounts/:name/address` in step 7 does not apply. If the token does not expose `CKA_EC_POINT`, build the public key object from the recovered public key that matched in step 6.
+
+The HSM receives one plain secp256k1 key, not a wallet: it cannot derive other accounts, and each further account needs its own export. Only that key leaves vault-blockchain; the seed and the other accounts do not. To let the HSM derive the wallet's accounts itself, export the seed instead.
+
 ### HD Wallet Seed
 
 `byok/export/wallet/:wallet_id` sends the BIP-39 seed of an HD wallet instead of a single account key. The steps are the same as above, with these differences:
@@ -121,7 +131,7 @@ The seed on its own does not sign anything. To use the wallet, the HSM must deri
 
 4. Sign a 32-byte digest with the derived key and verify it as in step 6 above.
 
-BIP-32 is not part of standard PKCS#11; HSMs that support it do so with vendor mechanisms (see the vendor guides). An HSM without BIP-32 can still unwrap and store the seed, which is enough to check the wrapping format, but it cannot derive or sign with the wallet's accounts.
+BIP-32 is not part of standard PKCS#11; HSMs that support it do so with vendor mechanisms (see the vendor guides). An HSM without BIP-32 can still unwrap and store the seed, which is enough to check the wrapping format, but it cannot derive or sign with the wallet's accounts. To use those accounts on such an HSM, export them one at a time ([HD Wallet Account](#hd-wallet-account)).
 
 ## Format Conversions
 
@@ -151,11 +161,11 @@ openssl rsa -RSAPublicKey_in -inform DER -in rsapub.der -pubout -out kek_pub.pem
 openssl pkey -pubin -in kek_pub.pem -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1
 ```
 
-`byok/export/account/:name` and `byok/export/wallet/:wallet_id` accept both `PUBLIC KEY` (SubjectPublicKeyInfo) and `RSA PUBLIC KEY` (PKCS#1) PEM.
+All `byok/export/` paths accept both `PUBLIC KEY` (SubjectPublicKeyInfo) and `RSA PUBLIC KEY` (PKCS#1) PEM.
 
 ### Private Key Encoding
 
-`byok/export/account/:name` wraps a PKCS#8 `PrivateKeyInfo` whose `ECPrivateKey` carries the uncompressed public key and no `[0]` parameters, byte-identical to OpenSSL `pkcs8 -topk8`: 135 bytes of DER, 144 bytes after AES-KWP. Luna and SoftHSM2 both unwrap it as is.
+`byok/export/account/:name` and `byok/export/wallet/:wallet_id/accounts/:index` wrap a PKCS#8 `PrivateKeyInfo` whose `ECPrivateKey` carries the uncompressed public key and no `[0]` parameters, byte-identical to OpenSSL `pkcs8 -topk8`: 135 bytes of DER, 144 bytes after AES-KWP. Luna and SoftHSM2 both unwrap it as is.
 
 ### Public Key and Address
 
