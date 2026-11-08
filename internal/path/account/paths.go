@@ -27,6 +27,7 @@ func Paths() []*framework.Path {
 		pathListSingleKeyAccounts(),
 		pathSingleKeyAccountAddress(),
 		pathSingleKeyAccountImport(),
+		pathSingleKeyExportBYOK(),
 		pathSingleKeySign(),
 		pathSingleKeySignTxLegacy(),
 		pathSingleKeySignTxEIP1559(),

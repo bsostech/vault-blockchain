@@ -73,19 +73,21 @@ func ethereumBIP44ChildIndices(index uint32) []uint32 {
 	}
 }
 
-// derivePrivateKeyAtEthereumPath uses BIP-39 seed + BIP-32 (via btcsuite hdkeychain) to reach
-// m/44'/60'/0'/0/<index>, then returns the secp256k1 key as *ecdsa.PrivateKey for go-ethereum.
+// derivePrivateKeyAtEthereumPath turns a BIP-39 mnemonic into its seed (empty passphrase) and derives
+// the key at m/44'/60'/0'/0/<index> with derivePrivateKeyFromSeed.
 func derivePrivateKeyAtEthereumPath(mnemonic string, index uint32) (*ecdsa.PrivateKey, error) {
 	if !bip39.IsMnemonicValid(mnemonic) {
 		return nil, fmt.Errorf("invalid mnemonic")
 	}
 	seed := bip39.NewSeed(mnemonic, "")
-	defer func() {
-		for i := range seed {
-			seed[i] = 0
-		}
-	}()
+	defer utils.ZeroBytes(seed)
+	return derivePrivateKeyFromSeed(seed, index)
+}
 
+// derivePrivateKeyFromSeed uses BIP-32 (via btcsuite hdkeychain) to reach m/44'/60'/0'/0/<index> from a
+// seed, then returns the secp256k1 key as *ecdsa.PrivateKey for go-ethereum. The seed is not modified;
+// the caller owns and zeroes it.
+func derivePrivateKeyFromSeed(seed []byte, index uint32) (*ecdsa.PrivateKey, error) {
 	master, err := hdkeychain.NewMaster(seed, &chaincfg.MainNetParams)
 	if err != nil {
 		return nil, fmt.Errorf("hd master: %w", err)

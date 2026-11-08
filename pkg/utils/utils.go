@@ -34,6 +34,11 @@ func ZeroKey(k *ecdsa.PrivateKey) {
 	if k == nil || k.D == nil {
 		return
 	}
+	// SetInt64 alone only shortens the big.Int and leaves the scalar in its backing array, which Bits shares.
+	words := k.D.Bits()
+	for i := range words {
+		words[i] = 0
+	}
 	k.D.SetInt64(0)
 }
 
@@ -48,4 +53,11 @@ func ValidNumber(input string) *big.Int {
 	}
 	amount := math.MustParseBig256(input)
 	return amount.Abs(amount)
+}
+
+// ZeroBytes overwrites b with zeros. Use it to clear sensitive buffers (for example DER-encoded keys) after use.
+func ZeroBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
 }

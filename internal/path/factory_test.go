@@ -57,7 +57,7 @@ func TestGetPaths(t *testing.T) {
 		seen[p.Pattern] = struct{}{}
 	}
 
-	var hasAccounts, hasWallets bool
+	var hasAccounts, hasWallets, hasBYOK bool
 	for pattern := range seen {
 		if len(pattern) >= len("accounts/") && pattern[:len("accounts/")] == "accounts/" {
 			hasAccounts = true
@@ -65,12 +65,18 @@ func TestGetPaths(t *testing.T) {
 		if len(pattern) >= len("wallets/") && pattern[:len("wallets/")] == "wallets/" {
 			hasWallets = true
 		}
+		if len(pattern) >= len("byok/") && pattern[:len("byok/")] == "byok/" {
+			hasBYOK = true
+		}
 	}
 	if !hasAccounts {
 		t.Fatal("expected at least one accounts/ path.")
 	}
 	if !hasWallets {
 		t.Fatal("expected at least one wallets/ path.")
+	}
+	if !hasBYOK {
+		t.Fatal("expected at least one byok/ path.")
 	}
 
 	_ = framework.Path{}

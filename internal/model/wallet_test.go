@@ -18,10 +18,13 @@
 package model
 
 import (
+	"bytes"
+	"encoding/hex"
 	"errors"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/tyler-smith/go-bip39"
 
 	"github.com/bsostech/vault-blockchain/pkg/utils"
 )
@@ -108,5 +111,53 @@ func TestPrivateKeyECDSA_indexOutOfRange(t *testing.T) {
 	}
 	if !errors.Is(err, ErrIndexOutOfRange) {
 		t.Fatalf("expected %v, got %v", ErrIndexOutOfRange, err)
+	}
+}
+
+// TestDerivePrivateKeyFromSeed_matchesMnemonic verifies seed-based derivation gives the same key as the
+// mnemonic-based path and leaves the seed untouched.
+func TestDerivePrivateKeyFromSeed_matchesMnemonic(t *testing.T) {
+	t.Parallel()
+	seed := bip39.NewSeed(testMnemonicHD, "")
+	orig := append([]byte(nil), seed...)
+	for _, idx := range []uint32{0, 1, 7, MaxBIP44AddressIndex} {
+		fromSeed, err := derivePrivateKeyFromSeed(seed, idx)
+		if err != nil {
+			t.Fatalf("seed %d: %v", idx, err)
+		}
+		fromMnemonic, err := PrivateKeyECDSA(testMnemonicHD, idx)
+		if err != nil {
+			t.Fatalf("mnemonic %d: %v", idx, err)
+		}
+		if fromSeed.D.Cmp(fromMnemonic.D) != 0 {
+			t.Fatalf("index %d: seed and mnemonic derivation differ", idx)
+		}
+		utils.ZeroKey(fromSeed)
+		utils.ZeroKey(fromMnemonic)
+	}
+	if !bytes.Equal(seed, orig) {
+		t.Fatal("derivePrivateKeyFromSeed modified the seed")
+	}
+}
+
+// TestDerivePrivateKeyFromSeed_knownVector checks the widely published BIP-39 seed and m/44'/60'/0'/0/0
+// address for the "abandon ... about" mnemonic with an empty passphrase.
+func TestDerivePrivateKeyFromSeed_knownVector(t *testing.T) {
+	t.Parallel()
+	const wantSeed = "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc1" +
+		"9a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4"
+	const wantAddr = "0x9858EfFD232B4033E47d90003D41EC34EcaEda94"
+
+	seed := bip39.NewSeed(testMnemonicHD, "")
+	if got := hex.EncodeToString(seed); got != wantSeed {
+		t.Fatalf("seed=%s want %s", got, wantSeed)
+	}
+	pk, err := derivePrivateKeyFromSeed(seed, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { utils.ZeroKey(pk) })
+	if got := crypto.PubkeyToAddress(pk.PublicKey).Hex(); got != wantAddr {
+		t.Fatalf("address=%s want %s", got, wantAddr)
 	}
 }
