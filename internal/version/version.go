@@ -23,7 +23,7 @@ import "fmt"
 // Version is the semantic version without the leading "v" (RunningVersion uses "v"+Version).
 // It is a const so it cannot be overridden with -ldflags=-X; bump this value for releases.
 // Name and GitCommit remain injectable at link time below.
-const Version = "0.1.0"
+const Version = "2.2.0"
 
 var (
 	// Name is the plugin or distribution name; optional, set at link time, e.g.

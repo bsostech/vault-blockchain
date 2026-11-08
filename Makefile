@@ -31,7 +31,7 @@ setup-plugin-local:
 setup-plugin-local-smoke:
 	ROOT_TOKEN=${ROOT_TOKEN} VAULT_ADDR=${VAULT_ADDR} SMOKE=1 bash scripts/setup_plugin_local.sh
 
-# Assumes plugin is registered and blockchain/ is enabled; only runs smoke (set VAULT_TOKEN).
+# Assumes plugin is registered and blockchain/ is enabled; only runs smoke (set ROOT_TOKEN).
 smoke-local:
 	VAULT_ADDR=${VAULT_ADDR} VAULT_TOKEN=${ROOT_TOKEN} bash scripts/e2e_smoke.sh
 
