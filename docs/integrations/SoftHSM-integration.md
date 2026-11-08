@@ -37,4 +37,4 @@ pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so -M   # lists RSA-PKCS-OAEP 
 
 ## HD Wallet Seeds
 
-SoftHSM2 has no BIP-32 mechanisms. It can unwrap a seed exported with `byok/export/wallet/:wallet_id` and store it as a generic secret ([HD Wallet Seed](README.md#hd-wallet-seed)), which is useful to check the wrapping format, but it cannot derive the wallet's accounts or sign with them. As for the AES key, leave `CKA_VALUE_LEN` out of the seed's unwrap template.
+SoftHSM2 has no BIP-32 mechanisms. It can unwrap a seed exported with `byok/export/wallet/:wallet_id` and store it as a generic secret ([HD Wallet Seed](README.md#hd-wallet-seed)), which is useful to check the wrapping format, but it cannot derive the wallet's accounts or sign with them. To use those accounts on SoftHSM2, export them one at a time ([HD Wallet Account](README.md#hd-wallet-account)). As for the AES key, leave `CKA_VALUE_LEN` out of the seed's unwrap template.

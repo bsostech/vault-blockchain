@@ -2,9 +2,11 @@
 # End-to-end checks of the BYOK API against a live Vault with the plugin mounted at blockchain/.
 #
 # Covers: account export unwrapped with OpenSSL and checked against the original key, wallet (BIP-39 seed)
-# export unwrapped with OpenSSL and checked against the mnemonic and the wallet's derived addresses, the error
-# statuses, that the removed KEK and import-byok paths are gone, and that the policies in configs/ actually
-# keep users away from byok/export/ while operators can use it. A local RSA key plays the receiving HSM's KEK.
+# export unwrapped with OpenSSL and checked against the mnemonic and the wallet's derived addresses, derived
+# account export unwrapped with OpenSSL and checked against the account's address, the error statuses, that the
+# removed KEK and import-byok paths are gone, that the policies in configs/ actually keep users away from
+# byok/export/ while operators can use it, and that the seed and derived account export paths are granted
+# separately. A local RSA key plays the receiving HSM's KEK.
 #
 # Needs: curl, jq, openssl (3.2 or newer, for keccak-256), xxd, bc, and a Vault whose root token is in
 # VAULT_TOKEN.
@@ -242,6 +244,48 @@ expect_status "user cannot export their own wallet" 403
 api POST "$MOUNT/byok/export/wallet/$WALLET" "$ALICE_TOKEN" "$HSM_REQ"
 expect_status "user cannot export someone else's wallet" 403
 
+section "derived account export"
+# Uses the wallet and addresses from the wallet export section.
+api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/1" "$OPS_TOKEN" "$HSM_REQ"
+expect_status "operator exports derived account 1" 200
+expect_eq "export echoes the wallet_id" "$(printf '%s' "$BODY" | jq -r .data.wallet_id)" "$WALLET"
+expect_eq "export echoes the account_index" "$(printf '%s' "$BODY" | jq -r .data.account_index)" 1
+expect_eq "export reports the account address" "$(printf '%s' "$BODY" | jq -r .data.address | tr 'A-F' 'a-f')" "$WADDR1"
+expect_eq "export reports the derivation path" "$(printf '%s' "$BODY" | jq -r .data.derivation_path)" "m/44'/60'/0'/0/1"
+expect_eq "derived export fingerprint equals the SHA-256 of the DER public key" "$(printf '%s' "$BODY" | jq -r .data.kek_public_key_sha256)" "$HSM_FP"
+case "$BODY" in *abandon*) bad "the export response contains the mnemonic" ;; *) ok "the export response does not contain the mnemonic" ;; esac
+printf '%s' "$BODY" | jq -r .data.byok_blob | openssl base64 -d -A >"$WORK/derived.byok"
+expect_eq "derived account blobs carry no key_type" "$(jq -r '.key_type // "absent"' "$WORK/derived.byok")" absent
+expect_eq "blob header carries the kid" "$(jq -r .header.kid "$WORK/derived.byok")" "$HSM_KID"
+unwrap "$WORK/derived.byok" "$WORK/hsm.pem" "$WORK/derived.der"
+expect_eq "the AES key unwraps and is 256 bits" "$AES_LEN" 32
+DERIVED_ADDR="0x$(openssl pkey -inform DER -in "$WORK/derived.der" -pubout -outform DER | tail -c 64 | openssl dgst -keccak-256 -binary | tail -c 20 | xxd -p)"
+expect_eq "the unwrapped PKCS#8 key has the address of account 1" "$DERIVED_ADDR" "$WADDR1"
+expect_eq "the unwrapped key is m/44'/60'/0'/0/1 of the exported seed" "$DERIVED_ADDR" "0x$(eth_address_at "$WORK/wallet.seed" 1)"
+
+api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/5" "$OPS_TOKEN" "$HSM_REQ"
+expect_status "export of an account not derived yet is 404" 404
+expect_contains "404 carries account_not_found" "$BODY" "account_not_found"
+api POST "$MOUNT/byok/export/wallet/none-$RUN/accounts/0" "$OPS_TOKEN" "$HSM_REQ"
+expect_status "export from a missing wallet is 404" 404
+expect_contains "404 carries wallet_not_found" "$BODY" "wallet_not_found"
+api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/2147483648" "$OPS_TOKEN" "$HSM_REQ"
+expect_status "export of an index beyond BIP-44 is 400" 400
+expect_contains "400 carries invalid_index" "$BODY" "invalid_index"
+api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/01" "$OPS_TOKEN" "$HSM_REQ"
+expect_status "export of an index with a leading zero is 400" 400
+expect_contains "400 carries invalid_index" "$BODY" "invalid_index"
+api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/0" "$OPS_TOKEN" '{"kid":"x","kek_public_key_pem":"not pem"}'
+expect_status "derived export with a bad public key is 400" 400
+expect_contains "400 carries invalid_kek_public_key" "$BODY" "invalid_kek_public_key"
+
+api POST "$MOUNT/wallets/$ALICE/accounts" "$ALICE_TOKEN"
+expect_status "user derives an account in their own wallet" 200
+api POST "$MOUNT/byok/export/wallet/$ALICE/accounts/0" "$ALICE_TOKEN" "$HSM_REQ"
+expect_status "user cannot export an account of their own wallet" 403
+api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/0" "$ALICE_TOKEN" "$HSM_REQ"
+expect_status "user cannot export an account of someone else's wallet" 403
+
 section "policies: users"
 api POST "$MOUNT/accounts/$ALICE/address" "$ALICE_TOKEN"
 expect_status "user creates their own account" 200
@@ -258,6 +302,33 @@ expect_status "user cannot sign with another user's account" 403
 section "policies: operator"
 api POST "$MOUNT/accounts/$ALICE/sign" "$OPS_TOKEN" '{"data":"0x68656c6c6f"}'
 expect_status "operator policy does not grant signing" 403
+api POST "$MOUNT/byok/export/account/acct-$RUN" "$OPS_TOKEN" "$HSM_REQ"
+expect_status "operator policy allows account export" 200
+api POST "$MOUNT/byok/export/wallet/$WALLET" "$OPS_TOKEN" "$HSM_REQ"
+expect_status "operator policy allows seed export" 200
+api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/0" "$OPS_TOKEN" "$HSM_REQ"
+expect_status "operator policy allows derived account export" 200
+
+section "policies: seed and derived account export are separate"
+# Each token gets one of the two path rules from configs/blockchain_byok.hcl, so neither rule can cover the other.
+grant_only() { # grant_only POLICY_NAME HCL_PATH -> prints a token holding only that rule
+	root PUT "sys/policies/acl/$1" "$(jq -n --arg p "path \"$2\" { capabilities = [ \"update\" ] }" '{policy:$p}')"
+	root POST "auth/token/create" "$(jq -n --arg pol "$1" '{policies:[$pol]}')"
+	printf '%s' "$BODY" | jq -r .auth.client_token
+}
+for rule in "$MOUNT/byok/export/wallet/+" "$MOUNT/byok/export/wallet/+/accounts/+"; do
+	grep -qF "path \"$rule\"" "$ROOT_DIR/configs/blockchain_byok.hcl" && ok "blockchain_byok.hcl has the rule $rule" || bad "blockchain_byok.hcl lacks the rule $rule"
+done
+SEED_ONLY_TOKEN="$(grant_only "seed-only-$RUN" "$MOUNT/byok/export/wallet/+")"
+DERIVED_ONLY_TOKEN="$(grant_only "derived-only-$RUN" "$MOUNT/byok/export/wallet/+/accounts/+")"
+api POST "$MOUNT/byok/export/wallet/$WALLET" "$SEED_ONLY_TOKEN" "$HSM_REQ"
+expect_status "the seed rule allows seed export" 200
+api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/0" "$SEED_ONLY_TOKEN" "$HSM_REQ"
+expect_status "the seed rule does not allow derived account export" 403
+api POST "$MOUNT/byok/export/wallet/$WALLET/accounts/0" "$DERIVED_ONLY_TOKEN" "$HSM_REQ"
+expect_status "the derived account rule allows derived account export" 200
+api POST "$MOUNT/byok/export/wallet/$WALLET" "$DERIVED_ONLY_TOKEN" "$HSM_REQ"
+expect_status "the derived account rule does not allow seed export" 403
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

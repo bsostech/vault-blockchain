@@ -28,7 +28,7 @@ import (
 const MaxKIDLength = 1024
 
 // InvalidKEKPublicKeyMessage is the message returned with invalid_kek_public_key on export.
-const InvalidKEKPublicKeyMessage = "kek_public_key_pem must be an RSA public key of 2048, 3072, or 4096 bits"
+const InvalidKEKPublicKeyMessage = "kek_public_key_pem must be an RSA public key of 2048, 3072, or 4096 bits with a valid public exponent"
 
 // RespondCode returns an error response whose message starts with a machine-readable code, with the given
 // HTTP status. A 400 is a plain Vault error response.

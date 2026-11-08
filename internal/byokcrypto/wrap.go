@@ -83,8 +83,14 @@ func ValidKEKSize(bits int) bool {
 	return bits == 2048 || bits == 3072 || bits == 4096
 }
 
+// validKEKExponent reports whether e is usable for RSA-OAEP: odd and greater than 1. Without this check such a
+// key would pass validation and only fail later, in the wrap.
+func validKEKExponent(e int) bool {
+	return e > 1 && e%2 == 1
+}
+
 // ParseKEKPublicKeyPEM parses an RSA public key from PEM ("PUBLIC KEY" SubjectPublicKeyInfo or
-// "RSA PUBLIC KEY" PKCS#1) and checks its size.
+// "RSA PUBLIC KEY" PKCS#1) and checks its size and public exponent.
 func ParseKEKPublicKeyPEM(s string) (*rsa.PublicKey, error) {
 	block, rest := pem.Decode([]byte(s))
 	if block == nil || len(strings.TrimSpace(string(rest))) != 0 {
@@ -111,7 +117,7 @@ func ParseKEKPublicKeyPEM(s string) (*rsa.PublicKey, error) {
 	default:
 		return nil, ErrInvalidKEKPublicKey
 	}
-	if !ValidKEKSize(pub.N.BitLen()) {
+	if !ValidKEKSize(pub.N.BitLen()) || !validKEKExponent(pub.E) {
 		return nil, ErrInvalidKEKPublicKey
 	}
 	return pub, nil
