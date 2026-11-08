@@ -1,6 +1,6 @@
 # vault-blockchain
 
-vault-blockchain is a Vault plugin to generate and store Ethereum private keys. It supports signing and encryption operations in Vault without revealing private keys.
+vault-blockchain is a Vault plugin to generate and store Ethereum private keys. It supports signing and encryption operations in Vault without revealing private keys. Private keys leave Vault only through the BYOK export API, wrapped for a receiving HSM or KMS (see [BYOK](#api--byok-bring-your-own-key)).
 
 It supports two modes:
 
@@ -22,7 +22,7 @@ make build-local
 
 ## HCL Policies
 
-There are two types of Vault token used with this plugin: a **master token** and a **user token**.
+There are two types of Vault token used with this plugin: a **master token** and a **user token**. BYOK export needs a third, operator-only policy, `configs/blockchain_byok.hcl` (see [BYOK](#api--byok-bring-your-own-key)).
 The master token is used only to register accounts; it cannot read credentials. Each user token is bound to a Vault identity, so it can only operate keys under that identity.
 
 ```hcl
@@ -200,7 +200,7 @@ If the batch is rejected because it would exceed the BIP-44 index bound, **no** 
 * `value` `(string: <optional>)` - Value in wei (decimal). Alias: `amount`. Default `0`.
 * `gas_limit` `(string: <optional>)` - Gas limit (decimal). Default `21000`.
 * `gas_price` `(string: <optional>)` - Gas price in wei (decimal). Default `0`.
-* `data` `(string: <optional>)` - Transaction calldata hex. Default empty.
+* `data` `(string: <optional>)` - Transaction calldata as 0x-prefixed hex. Default empty.
 
 ##### `POST blockchain/wallets/:wallet_id/accounts/:index/sign-tx/eip1559`
 
@@ -214,7 +214,7 @@ If the batch is rejected because it would exceed the BIP-44 index bound, **no** 
 * `max_fee_per_gas` `(string: <required>)` - Max fee per gas in wei (decimal). Alias: `maxFeePerGas`.
 * `max_priority_fee_per_gas` `(string: <required>)` - Max priority fee per gas in wei (decimal). Alias: `maxPriorityFeePerGas`.
 * `access_list` `(string: <optional>)` - EIP-2930 access list as JSON array.
-* `data` `(string: <optional>)` - Transaction calldata hex. Default empty.
+* `data` `(string: <optional>)` - Transaction calldata as 0x-prefixed hex. Default empty.
 
 ### Wallet Sign Data
 
@@ -226,7 +226,7 @@ If the batch is rejected because it would exceed the BIP-44 index bound, **no** 
 
 * `wallet_id` `(string: <required>)` - Wallet identifier in the path.
 * `index` `(string: <required>)` - BIP-44 address index in the path.
-* `data` `(string: <required>)` - Hex-encoded payload to Keccak-256 hash and sign.
+* `data` `(string: <required>)` - 0x-prefixed hex payload to Keccak-256 hash and sign.
 
 **Response:** `{ "signature": "0x...", "address": "0x..." }`
 
@@ -257,7 +257,7 @@ If the batch is rejected because it would exceed the BIP-44 index bound, **no** 
 
 * `wallet_id` `(string: <required>)` - Wallet identifier in the path.
 * `index` `(string: <required>)` - BIP-44 address index in the path.
-* `data` `(string: <required>)` - Hex plaintext to encrypt (ECIES).
+* `data` `(string: <required>)` - 0x-prefixed hex plaintext to encrypt (ECIES).
 
 **Response:** `{ "ciphertext": "0x..." }`
 
@@ -265,7 +265,7 @@ If the batch is rejected because it would exceed the BIP-44 index bound, **no** 
 
 * `wallet_id` `(string: <required>)` - Wallet identifier in the path.
 * `index` `(string: <required>)` - BIP-44 address index in the path.
-* `data` `(string: <required>)` - Hex ciphertext to decrypt (ECIES).
+* `data` `(string: <required>)` - 0x-prefixed hex ciphertext to decrypt (ECIES).
 
 **Response:** `{ "plaintext": "0x..." }`
 
@@ -341,7 +341,7 @@ No parameters.
 * `value` `(string: <optional>)` - Value in wei (decimal). Alias: `amount`. Default `0`.
 * `gas_limit` `(string: <optional>)` - Gas limit (decimal). Default `21000`.
 * `gas_price` `(string: <optional>)` - Gas price in wei (decimal). Default `0`.
-* `data` `(string: <optional>)` - Transaction calldata hex. Default empty.
+* `data` `(string: <optional>)` - Transaction calldata as 0x-prefixed hex. Default empty.
 
 ##### `POST blockchain/accounts/:name/sign-tx/eip1559`
 
@@ -354,7 +354,7 @@ No parameters.
 * `max_fee_per_gas` `(string: <required>)` - Max fee per gas in wei (decimal). Alias: `maxFeePerGas`.
 * `max_priority_fee_per_gas` `(string: <required>)` - Max priority fee per gas in wei (decimal). Alias: `maxPriorityFeePerGas`.
 * `access_list` `(string: <optional>)` - EIP-2930 access list as JSON array.
-* `data` `(string: <optional>)` - Transaction calldata hex. Default empty.
+* `data` `(string: <optional>)` - Transaction calldata as 0x-prefixed hex. Default empty.
 
 ### Sign Data
 
@@ -365,7 +365,7 @@ No parameters.
 #### Parameters
 
 * `name` `(string: <required>)` - Logical account name in the path.
-* `data` `(string: <required>)` - Hex-encoded payload to Keccak-256 hash and sign.
+* `data` `(string: <required>)` - 0x-prefixed hex payload to Keccak-256 hash and sign.
 
 **Response:** `{ "signature": "0x...", "address": "0x..." }`
 
@@ -394,14 +394,14 @@ No parameters.
 ##### `POST blockchain/accounts/:name/encrypt`
 
 * `name` `(string: <required>)` - Logical account name in the path.
-* `data` `(string: <required>)` - Hex plaintext to encrypt (ECIES).
+* `data` `(string: <required>)` - 0x-prefixed hex plaintext to encrypt (ECIES).
 
 **Response:** `{ "ciphertext": "0x..." }`
 
 ##### `POST blockchain/accounts/:name/decrypt`
 
 * `name` `(string: <required>)` - Logical account name in the path.
-* `data` `(string: <required>)` - Hex ciphertext to decrypt (ECIES).
+* `data` `(string: <required>)` - 0x-prefixed hex ciphertext to decrypt (ECIES).
 
 **Response:** `{ "plaintext": "0x..." }`
 
@@ -462,8 +462,8 @@ A `.byok` file is JSON:
 ##### `POST blockchain/byok/export/account/:name`
 
 * `name` `(string: <required>)` - Name of the account to export, in the path.
-* `kid` `(string: <required>)` - Identifier of the receiving KEK, written to the blob header.
-* `kek_public_key_pem` `(string: <required>)` - Receiving KEK public key as PEM (RSA, 2048, 3072, or 4096 bits).
+* `kid` `(string: <required>)` - Identifier of the receiving KEK, written to the blob header (up to 1024 bytes).
+* `kek_public_key_pem` `(string: <required>)` - Receiving KEK public key as PEM, `PUBLIC KEY` or `RSA PUBLIC KEY` (RSA, 2048, 3072, or 4096 bits).
 
 **Response:** `{ "byok_blob": "<base64>", "address": "0x...", "kek_public_key_sha256": "<hex>" }`
 
@@ -553,7 +553,7 @@ VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=<root token> bash scripts/e2e_byok.
 
 ### Example: Unwrapping an Export With OpenSSL
 
-To check the wrapping format of an export without an HSM, let a local RSA key play the receiving KEK. This handles the key in the clear, so use it only with a test wallet or account.
+To check the wrapping format of an export without an HSM, let a local RSA key play the receiving KEK. This handles the key in the clear, so use it only with a test wallet or account. The commands need OpenSSL 3 (macOS ships LibreSSL, which lacks `kdf` and `-wrap-pad`; use `brew install openssl@3`), `jq`, and `xxd`.
 
 ```bash
 # 1. A local KEK, in place of the HSM's.

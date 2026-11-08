@@ -45,7 +45,7 @@ install_plugin() {
   sha="$(sha256_bin "${REPO_ROOT}/plugins/vault-blockchain")"
   # Vault matches catalog entry to the plugin's self-reported semver (framework.Backend.RunningVersion).
   # Must match "v" + internal/version.Version (see version.go const).
-  local ver="${PLUGIN_VERSION:-v0.1.0}"
+  local ver="${PLUGIN_VERSION:-v2.2.0}"
   vault write sys/plugins/catalog/blockchain-plugin \
     sha_256="${sha}" \
     command="vault-blockchain --tls-skip-verify=true" \
